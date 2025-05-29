@@ -59,24 +59,53 @@ async function guardarInventario() {
     }
 }
 
-// Utilidades
-function dividirTexto(texto, limite = 4000) {
-    if (texto.length <= limite) return [texto];
+// Utilidad mejorada para dividir texto manteniendo límites de Discord
+function crearInventarioEmbed(inventario, pagina = 1, itemsPorPagina = 20) {
+    const productos = Object.keys(inventario).sort();
+    const totalItems = productos.length;
+    const totalPaginas = Math.ceil(totalItems / itemsPorPagina);
     
-    const partes = [];
-    let inicio = 0;
-    
-    while (inicio < texto.length) {
-        let fin = inicio + limite;
-        if (fin < texto.length) {
-            const ultimoSalto = texto.lastIndexOf('\n', fin);
-            if (ultimoSalto > inicio) fin = ultimoSalto;
-        }
-        partes.push(texto.slice(inicio, fin));
-        inicio = fin;
+    if (totalItems === 0) {
+        return {
+            embed: new EmbedBuilder()
+                .setColor('#17a2b8')
+                .setTitle('📋 Inventario')
+                .setDescription('📦 Inventario vacío')
+                .setTimestamp(),
+            totalPaginas: 1
+        };
     }
+
+    const inicio = (pagina - 1) * itemsPorPagina;
+    const fin = inicio + itemsPorPagina;
+    const productosEnPagina = productos.slice(inicio, fin);
     
-    return partes;
+    let descripcion = '';
+    let totalUnidades = 0;
+
+    productosEnPagina.forEach(producto => {
+        const stock = inventario[producto];
+        const icono = stock === 0 ? '🔴' : stock < 10 ? '🟡' : '🟢';
+        descripcion += `${icono} **${producto}**: ${stock}\n`;
+        totalUnidades += stock;
+    });
+
+    const embed = new EmbedBuilder()
+        .setColor('#17a2b8')
+        .setTitle(`📋 Inventario ${totalPaginas > 1 ? `(${pagina}/${totalPaginas})` : ''}`)
+        .setDescription(descripcion)
+        .addFields(
+            { name: 'Items mostrados', value: productosEnPagina.length.toString(), inline: true },
+            { name: 'Total items', value: totalItems.toString(), inline: true },
+            { name: 'Total unidades', value: Object.values(inventario).reduce((a, b) => a + b, 0).toString(), inline: true }
+        )
+        .setTimestamp();
+
+    if (totalPaginas > 1) {
+        embed.setFooter({ text: `Página ${pagina} de ${totalPaginas} • Usa !inventory [página] para navegar` });
+    }
+
+    return { embed, totalPaginas };
 }
 
 // Comandos del bot
@@ -91,7 +120,7 @@ const commands = {
                 { name: '!add [item] [cantidad]', value: 'Agregar items', inline: true },
                 { name: '!remove [item] [cantidad]', value: 'Quitar items', inline: true },
                 { name: '!stock [item]', value: 'Ver stock específico', inline: true },
-                { name: '!inventory', value: 'Ver inventario completo', inline: true },
+                { name: '!inventory [página]', value: 'Ver inventario completo', inline: true },
                 { name: '!search [término]', value: 'Buscar items', inline: true },
                 { name: '!categories', value: 'Ver categorías', inline: true },
                 { name: '!category [nombre]', value: 'Items de categoría', inline: true },
@@ -117,7 +146,8 @@ const commands = {
         }
 
         const producto = args.slice(0, -1).join(' ').toLowerCase();
-        inventario[producto] = (inventario[producto] || 0) + cantidad;
+        const stockAnterior = inventario[producto] || 0;
+        inventario[producto] = stockAnterior + cantidad;
 
         const guardado = await guardarInventario();
         
@@ -197,63 +227,31 @@ const commands = {
         return message.reply({ embeds: [embed] });
     },
 
-    // Ver inventario completo - CORREGIDO
-    async inventory(message) {
+    // Ver inventario completo - CORREGIDO para enviar solo un mensaje
+    async inventory(message, args) {
         const productos = Object.keys(inventario);
         
         if (productos.length === 0) {
             return message.reply('📦 Inventario vacío');
         }
 
-        let descripcion = '';
-        let totalItems = 0;
-        let totalUnidades = 0;
-
-        productos.sort().forEach(producto => {
-            const stock = inventario[producto];
-            const icono = stock === 0 ? '🔴' : stock < 10 ? '🟡' : '🟢';
-            descripcion += `${icono} **${producto}**: ${stock}\n`;
-            totalItems++;
-            totalUnidades += stock;
-        });
-
-        const partes = dividirTexto(descripcion);
-        
-        // Enviar solo la primera parte como reply
-        const embed = new EmbedBuilder()
-            .setColor('#17a2b8')
-            .setTitle(`📋 Inventario ${partes.length > 1 ? `(1/${partes.length})` : ''}`)
-            .setDescription(partes[0])
-            .setTimestamp();
-
-        if (partes.length === 1) {
-            embed.addFields(
-                { name: 'Total Items', value: totalItems.toString(), inline: true },
-                { name: 'Total Unidades', value: totalUnidades.toString(), inline: true }
-            );
-        }
-
-        const initialReply = await message.reply({ embeds: [embed] });
-
-        // Enviar partes adicionales como follow-ups
-        for (let i = 1; i < partes.length; i++) {
-            const followUpEmbed = new EmbedBuilder()
-                .setColor('#17a2b8')
-                .setTitle(`📋 Inventario (${i + 1}/${partes.length})`)
-                .setDescription(partes[i])
-                .setTimestamp();
-
-            if (i === partes.length - 1) {
-                followUpEmbed.addFields(
-                    { name: 'Total Items', value: totalItems.toString(), inline: true },
-                    { name: 'Total Unidades', value: totalUnidades.toString(), inline: true }
-                );
+        // Determinar página solicitada
+        let pagina = 1;
+        if (args.length > 0) {
+            const paginaSolicitada = parseInt(args[0]);
+            if (!isNaN(paginaSolicitada) && paginaSolicitada > 0) {
+                pagina = paginaSolicitada;
             }
-
-            await message.channel.send({ embeds: [followUpEmbed] });
         }
 
-        return initialReply;
+        const { embed, totalPaginas } = crearInventarioEmbed(inventario, pagina);
+        
+        // Verificar si la página solicitada existe
+        if (pagina > totalPaginas) {
+            return message.reply(`❌ Página ${pagina} no existe. Total de páginas: ${totalPaginas}`);
+        }
+
+        return message.reply({ embeds: [embed] });
     },
 
     // Buscar productos
@@ -264,18 +262,28 @@ const commands = {
 
         const termino = args.join(' ').toLowerCase();
         const encontrados = Object.keys(inventario)
-            .filter(producto => producto.includes(termino))
+            .filter(producto => producto.includes(termino));
+
+        if (encontrados.length === 0) {
+            return message.reply(`❌ No se encontraron productos con "${termino}"`);
+        }
+
+        // Limitar resultados para evitar mensajes muy largos
+        const maxResultados = 20;
+        const productosLimitados = encontrados.slice(0, maxResultados);
+        
+        let descripcion = productosLimitados
             .map(producto => `**${producto}**: ${inventario[producto]}`)
             .join('\n');
 
-        if (!encontrados) {
-            return message.reply(`❌ No se encontraron productos con "${termino}"`);
+        if (encontrados.length > maxResultados) {
+            descripcion += `\n\n*... y ${encontrados.length - maxResultados} resultados más*`;
         }
 
         const embed = new EmbedBuilder()
             .setColor('#ffc107')
-            .setTitle('🔍 Resultados de Búsqueda')
-            .setDescription(encontrados)
+            .setTitle(`🔍 Resultados de Búsqueda (${encontrados.length})`)
+            .setDescription(descripcion)
             .setTimestamp();
 
         return message.reply({ embeds: [embed] });
@@ -500,7 +508,7 @@ client.on('messageCreate', async (message) => {
     // Evitar procesamiento concurrente
     if (isProcessing) {
         console.log('⚠️ Bot ocupado procesando otro comando');
-        return;
+        return message.reply('⏳ Bot ocupado, intenta de nuevo en un momento...');
     }
 
     // Marcar mensaje como procesado
