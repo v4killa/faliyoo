@@ -2,8 +2,8 @@ const { Client, GatewayIntentBits, EmbedBuilder, ActivityType } = require('disco
 const fs = require('fs').promises;
 const path = require('path');
 
-// ⚠️ IMPORTANTE: Reemplaza 'TU_TOKEN_AQUI' con tu token real de Discord
-const DISCORD_TOKEN = 'MTM1OTg5OTEwOTUxODk5OTU4Mg.GOY-N3.8G5aFFr2bYFLQeN7IW1fidBJJt1dQHZRlwxKdI';
+// ✅ CAMBIO IMPORTANTE: Usar variable de entorno
+const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 
 // Archivo para guardar el inventario
 const INVENTARIO_FILE = path.join(__dirname, 'inventario.json');
@@ -336,7 +336,7 @@ async function mostrarAyuda(message) {
             { name: '**!importar [categoría]**', value: 'Importa todos los items de una categoría\nEjemplo: `!importar planos`', inline: false },
             { name: '**!limpiar**', value: 'Limpia todo el inventario (requiere confirmación)', inline: false }
         )
-        .setFooter({ text: 'Bot de Inventario GTA RP v3.0 - Versión Simplificada con JSON' })
+        .setFooter({ text: 'Bot de Inventario GTA RP v3.0 - Versión Segura para Render' })
         .setTimestamp();
 
     await message.reply({ embeds: [embed] });
@@ -660,11 +660,12 @@ client.on('warn', (info) => {
     console.warn('⚠️ Advertencia:', info);
 });
 
-// Verificar que el token está configurado
-if (!DISCORD_TOKEN || DISCORD_TOKEN === 'MTM1OTg5OTEwOTUxODk5OTU4Mg.GOY-N3.8G5aFFr2bYFLQeN7IW1fidBJJt1dQHZRlwxKdI') {
+// ✅ VALIDACIÓN MEJORADA: Verificar que el token está configurado
+if (!DISCORD_TOKEN) {
     console.error('❌ ERROR: Debes configurar tu token de Discord');
     console.error('🔗 Ve a https://discord.com/developers/applications para obtener tu token');
-    console.error('📝 Reemplaza "TU_TOKEN_AQUI" con tu token real en la línea 5');
+    console.error('📝 Configura la variable de entorno DISCORD_TOKEN en Render');
+    console.error('🌐 Guía: https://render.com/docs/environment-variables');
     process.exit(1);
 }
 
