@@ -20,8 +20,8 @@ const client = new Client({
 // Base de datos del inventario
 let inventario = {};
 
-// 🔧 PREVENIR RESPUESTAS DUPLICADAS: Set para rastrear mensajes procesados
-const mensajesProcesados = new Set();
+// 🔧 PREVENIR RESPUESTAS DUPLICADAS: Map para rastrear mensajes procesados con timestamp
+const mensajesProcesados = new Map();
 
 // Lista simplificada de productos con categorías para GTA Roleplay
 const productosPredefindos = {
@@ -93,6 +93,16 @@ function dividirEmbed(contenido, limite = 4096) {
     return partes;
 }
 
+// 🔧 FUNCIÓN PARA LIMPIAR MENSAJES ANTIGUOS (más de 30 segundos)
+function limpiarMensajesAntiguos() {
+    const ahora = Date.now();
+    for (const [messageId, timestamp] of mensajesProcesados.entries()) {
+        if (ahora - timestamp > 30000) { // 30 segundos
+            mensajesProcesados.delete(messageId);
+        }
+    }
+}
+
 async function mostrarCategorias(message) {
     const embed = new EmbedBuilder()
         .setColor('#8b0000')
@@ -126,7 +136,6 @@ async function mostrarCategorias(message) {
         inline: false
     });
 
-    // 🔧 FIX: Solo una respuesta usando reply
     return message.reply({ embeds: [embed] });
 }
 
@@ -154,33 +163,17 @@ async function mostrarProductosCategoria(message, args) {
         descripcion += '\n';
     });
 
-    const partes = dividirEmbed(descripcion);
-    
-    // 🔧 FIX: Enviar embeds secuencialmente para evitar duplicados
-    for (let i = 0; i < partes.length; i++) {
-        const embed = new EmbedBuilder()
-            .setColor('#ff6347')
-            .setTitle(`🏷️ Categoría: ${categoria.charAt(0).toUpperCase() + categoria.slice(1)} ${partes.length > 1 ? `(${i + 1}/${partes.length})` : ''}`)
-            .setDescription(`Productos en esta categoría (${productos.length} total):`)
-            .setTimestamp();
+    const embed = new EmbedBuilder()
+        .setColor('#ff6347')
+        .setTitle(`🏷️ Categoría: ${categoria.charAt(0).toUpperCase() + categoria.slice(1)}`)
+        .setDescription(`Productos en esta categoría (${productos.length} total):`)
+        .addFields(
+            { name: 'Productos', value: descripcion, inline: false },
+            { name: 'Leyenda', value: '✅ En inventario con stock\n⚪ En inventario sin stock\n➕ No añadido al inventario', inline: false }
+        )
+        .setTimestamp();
 
-        embed.addFields({ name: 'Productos', value: partes[i], inline: false });
-        
-        if (i === partes.length - 1) {
-            embed.addFields({
-                name: 'Leyenda',
-                value: '✅ En inventario con stock\n⚪ En inventario sin stock\n➕ No añadido al inventario',
-                inline: false
-            });
-        }
-
-        // 🔧 FIX: Usar reply solo en la primera iteración, send en las siguientes
-        if (i === 0) {
-            await message.reply({ embeds: [embed] });
-        } else {
-            await message.channel.send({ embeds: [embed] });
-        }
-    }
+    return message.reply({ embeds: [embed] });
 }
 
 async function sugerirProductos(message, args) {
@@ -248,7 +241,6 @@ async function crearProductosLote(message, args) {
         }
     });
 
-    // Guardar cambios automáticamente
     await guardarInventario();
 
     const embed = new EmbedBuilder()
@@ -298,7 +290,6 @@ async function importarProductos(message, args) {
         }
     });
 
-    // Guardar cambios automáticamente
     await guardarInventario();
 
     const embed = new EmbedBuilder()
@@ -346,7 +337,7 @@ async function mostrarAyuda(message) {
             { name: '**!importar [categoría]**', value: 'Importa todos los items de una categoría\nEjemplo: `!importar planos`', inline: false },
             { name: '**!limpiar**', value: 'Limpia todo el inventario (requiere confirmación)', inline: false }
         )
-        .setFooter({ text: 'Bot de Inventario GTA RP v3.1 - Sin Respuestas Duplicadas' })
+        .setFooter({ text: 'Bot de Inventario GTA RP v3.2 - Corregido Sin Duplicados' })
         .setTimestamp();
 
     return message.reply({ embeds: [embed] });
@@ -370,7 +361,6 @@ async function agregarProducto(message, args) {
     
     inventario[producto] += cantidad;
 
-    // Guardar automáticamente
     await guardarInventario();
 
     const embed = new EmbedBuilder()
@@ -408,7 +398,6 @@ async function quitarProducto(message, args) {
     
     inventario[producto] -= cantidad;
 
-    // Guardar automáticamente
     await guardarInventario();
 
     const embed = new EmbedBuilder()
@@ -456,6 +445,7 @@ async function mostrarStock(message, args) {
     return message.reply({ embeds: [embed] });
 }
 
+// 🔧 FUNCIÓN CORREGIDA SIN DUPLICADOS
 async function mostrarInventarioCompleto(message) {
     const productos = Object.keys(inventario);
     
@@ -475,29 +465,18 @@ async function mostrarInventarioCompleto(message) {
         totalUnidades += stock;
     });
 
-    const partes = dividirEmbed(descripcion);
-    
-    // 🔧 FIX: Mismo patrón que mostrarProductosCategoria
-    for (let i = 0; i < partes.length; i++) {
-        const embed = new EmbedBuilder()
-            .setColor('#17a2b8')
-            .setTitle(`📋 Inventario Completo ${partes.length > 1 ? `(${i + 1}/${partes.length})` : ''}`)
-            .setDescription(partes[i])
-            .setTimestamp();
+    // 🔧 SOLUCIÓN SIMPLE: Una sola respuesta sin bucles complicados
+    const embed = new EmbedBuilder()
+        .setColor('#17a2b8')
+        .setTitle('📋 Inventario Completo')
+        .setDescription(descripcion.length > 4096 ? descripcion.substring(0, 4000) + '\n...(inventario muy largo)' : descripcion)
+        .addFields(
+            { name: 'Total de Productos', value: totalProductos.toString(), inline: true },
+            { name: 'Total de Unidades', value: totalUnidades.toString(), inline: true }
+        )
+        .setTimestamp();
 
-        if (i === partes.length - 1) {
-            embed.addFields(
-                { name: 'Total de Productos', value: totalProductos.toString(), inline: true },
-                { name: 'Total de Unidades', value: totalUnidades.toString(), inline: true }
-            );
-        }
-
-        if (i === 0) {
-            await message.reply({ embeds: [embed] });
-        } else {
-            await message.channel.send({ embeds: [embed] });
-        }
-    }
+    return message.reply({ embeds: [embed] });
 }
 
 async function buscarProducto(message, args) {
@@ -575,11 +554,11 @@ async function limpiarInventario(message) {
     }
 }
 
-// 🔧 LIMPIAR CACHE DE MENSAJES PROCESADOS CADA 5 MINUTOS
+// 🔧 LIMPIAR CACHE CADA 60 SEGUNDOS EN LUGAR DE 5 MINUTOS
 setInterval(() => {
-    mensajesProcesados.clear();
-    console.log('🧹 Cache de mensajes procesados limpiado');
-}, 5 * 60 * 1000);
+    limpiarMensajesAntiguos();
+    console.log(`🧹 Cache limpiado. Mensajes en cache: ${mensajesProcesados.size}`);
+}, 60 * 1000);
 
 // Prefijo para los comandos
 const PREFIX = '!';
@@ -590,21 +569,25 @@ client.once('ready', async () => {
     console.log(`📊 Conectado a ${client.guilds.cache.size} servidor(es)`);
     client.user.setActivity('Gestionando inventario de la banda 🔫', { type: ActivityType.Watching });
     
-    // Cargar inventario desde archivo
     await cargarInventario();
-    
-    // Inicializar productos básicos si es necesario
     await inicializarProductosBasicos();
 });
 
+// 🔧 EVENT LISTENER CORREGIDO
 client.on('messageCreate', async (message) => {
-    // 🔧 PREVENIR RESPUESTAS DUPLICADAS: Verificar si ya procesamos este mensaje
-    if (message.author.bot || !message.content.startsWith(PREFIX) || mensajesProcesados.has(message.id)) {
+    // Verificaciones básicas
+    if (message.author.bot || !message.content.startsWith(PREFIX)) {
         return;
     }
     
-    // 🔧 MARCAR MENSAJE COMO PROCESADO
-    mensajesProcesados.add(message.id);
+    // 🔧 VERIFICAR SI YA ESTÁ PROCESANDO ESTE MENSAJE
+    if (mensajesProcesados.has(message.id)) {
+        console.log(`⚠️ Mensaje ${message.id} ya está siendo procesado`);
+        return;
+    }
+    
+    // 🔧 MARCAR INMEDIATAMENTE COMO PROCESADO CON TIMESTAMP
+    mensajesProcesados.set(message.id, Date.now());
 
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
     const comando = args.shift().toLowerCase();
@@ -675,8 +658,11 @@ client.on('messageCreate', async (message) => {
         }
     } catch (error) {
         console.error('❌ Error al procesar comando:', error);
-        // 🔧 REMOVER DEL CACHE SI HAY ERROR PARA PERMITIR REINTENTO
-        mensajesProcesados.delete(message.id);
+        // 🔧 EN CASO DE ERROR, REMOVER DEL CACHE DESPUÉS DE UN DELAY
+        setTimeout(() => {
+            mensajesProcesados.delete(message.id);
+        }, 10000);
+        
         await message.reply('❌ Ocurrió un error al procesar el comando. Intenta nuevamente.');
     }
 });
