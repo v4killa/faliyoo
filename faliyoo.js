@@ -1,421 +1,168 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActivityType } = require('discord.js');
 const fs = require('fs').promises;
-const path = require('path');
 
-// ✅ CAMBIO IMPORTANTE: Usar variable de entorno
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+const INVENTARIO_FILE = './inventario.json';
 
-// Archivo para guardar el inventario
-const INVENTARIO_FILE = path.join(__dirname, 'inventario.json');
-
-// Configuración del bot
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ]
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
-// Base de datos del inventario
 let inventario = {};
-
-// 🔧 MEJORADO: Set para rastrear mensajes procesados (más eficiente que Map)
 const mensajesProcesados = new Set();
 
-// Lista simplificada de productos con categorías para GTA Roleplay
-const productosPredefindos = {
+// Productos predefinidos
+const productos = {
     'armas': ['vintage', 'glock', 'beretta', 'ak47', 'uzi'],
     'cargadores': ['cargador pistolas', 'cargador subfusil'],
     'drogas': ['bongs', 'pcp', 'galletas', 'fentanilo', 'cocaina', 'marihuana', 'heroina'],
-    'planos': ['supermercado', 'gasolinera', 'joyeria', 'barberia', 'licoreria', 'tatuajes', 'arquitectonicos', 'farmacia', 'ropa', 'banco']
+    'planos': ['supermercado', 'gasolinera', 'joyeria', 'barberia', 'licoreria', 'tatuajes', 'banco']
 };
 
-// Función para cargar el inventario desde el archivo JSON
+// Función para cargar inventario
 async function cargarInventario() {
     try {
         const data = await fs.readFile(INVENTARIO_FILE, 'utf8');
         inventario = JSON.parse(data);
-        console.log('✅ Inventario cargado desde archivo JSON');
-    } catch (error) {
-        console.log('📝 Archivo de inventario no encontrado, creando uno nuevo...');
+        console.log('✅ Inventario cargado');
+    } catch {
         inventario = {};
         await guardarInventario();
+        console.log('📝 Nuevo inventario creado');
     }
 }
 
-// Función para guardar el inventario en archivo JSON
+// Función para guardar inventario
 async function guardarInventario() {
     try {
-        await fs.writeFile(INVENTARIO_FILE, JSON.stringify(inventario, null, 2), 'utf8');
-        console.log('💾 Inventario guardado en archivo JSON');
+        await fs.writeFile(INVENTARIO_FILE, JSON.stringify(inventario, null, 2));
+        console.log('💾 Inventario guardado');
+        return true;
     } catch (error) {
-        console.error('❌ Error al guardar inventario:', error);
+        console.error('❌ Error al guardar:', error);
+        return false;
     }
 }
 
-// Función para inicializar productos básicos
-async function inicializarProductosBasicos() {
-    if (Object.keys(inventario).length === 0) {
-        const productosBasicos = [
-            'glock', 'beretta', 'cargador pistolas', 'cargador subfusil', 'bongs', 'pcp', 'galletas',
-            'supermercado', 'gasolinera', 'joyeria'
-        ];
-        
-        productosBasicos.forEach(producto => {
-            inventario[producto] = 0;
-        });
-        
-        await guardarInventario();
-        console.log('✅ Inventario básico de GTA RP inicializado');
-    }
-}
-
-// 🔧 FUNCIÓN MEJORADA PARA LIMPIAR MENSAJES ANTIGUOS
-function limpiarMensajesAntiguos() {
-    // Limpiar todos los mensajes después de 30 segundos
-    // Como usamos Set, simplemente lo limpiamos completamente
-    if (mensajesProcesados.size > 100) {
+// Limpiar cache cada 5 minutos
+setInterval(() => {
+    if (mensajesProcesados.size > 50) {
         mensajesProcesados.clear();
-        console.log('🧹 Cache de mensajes limpiado completamente');
+        console.log('🧹 Cache limpiado');
     }
-}
+}, 5 * 60 * 1000);
 
-async function mostrarCategorias(message) {
-    const embed = new EmbedBuilder()
-        .setColor('#8b0000')
-        .setTitle('🗂️ Categorías de Items - GTA RP')
-        .setDescription('Categorías disponibles para la banda:')
-        .setTimestamp();
-
-    Object.keys(productosPredefindos).forEach(categoria => {
-        const productos = productosPredefindos[categoria];
-        const muestra = productos.slice(0, 3).join(', ');
-        const extras = productos.length > 3 ? ` y ${productos.length - 3} más...` : '';
-        
-        let emoji = '';
-        switch(categoria) {
-            case 'armas': emoji = '🔫'; break;
-            case 'cargadores': emoji = '📦'; break;
-            case 'drogas': emoji = '💊'; break;
-            case 'planos': emoji = '🗺️'; break;
-        }
-        
-        embed.addFields({
-            name: `${emoji} ${categoria.charAt(0).toUpperCase() + categoria.slice(1)}`,
-            value: `${muestra}${extras}`,
-            inline: true
-        });
-    });
-
-    embed.addFields({
-        name: 'ℹ️ Uso',
-        value: 'Usa `!categoria [nombre]` para ver todos los items de una categoría\nUsa `!importar [categoría]` para añadir todos los items al inventario',
-        inline: false
-    });
-
-    return message.reply({ embeds: [embed] });
-}
-
-async function mostrarProductosCategoria(message, args) {
-    if (args.length === 0) {
-        return message.reply('❌ Uso correcto: `!categoria [nombre]`\nEjemplo: `!categoria armas`\nUsa `!categorias` para ver todas las categorías.');
-    }
-
-    const categoria = args.join(' ').toLowerCase();
-    
-    if (!productosPredefindos[categoria]) {
-        return message.reply(`❌ La categoría "${categoria}" no existe. Usa \`!categorias\` para ver las categorías disponibles.`);
-    }
-
-    const productos = productosPredefindos[categoria];
-    
-    let descripcion = '';
-    productos.forEach(producto => {
-        const enInventario = inventario.hasOwnProperty(producto);
-        const stock = enInventario ? inventario[producto] : 0;
-        const estado = enInventario ? (stock > 0 ? '✅' : '⚪') : '➕';
-        
-        descripcion += `${estado} ${producto.charAt(0).toUpperCase() + producto.slice(1)}`;
-        if (enInventario) descripcion += ` (${stock})`;
-        descripcion += '\n';
-    });
-
-    const embed = new EmbedBuilder()
-        .setColor('#ff6347')
-        .setTitle(`🏷️ Categoría: ${categoria.charAt(0).toUpperCase() + categoria.slice(1)}`)
-        .setDescription(`Productos en esta categoría (${productos.length} total):`)
-        .addFields(
-            { name: 'Productos', value: descripcion, inline: false },
-            { name: 'Leyenda', value: '✅ En inventario con stock\n⚪ En inventario sin stock\n➕ No añadido al inventario', inline: false }
-        )
-        .setTimestamp();
-
-    return message.reply({ embeds: [embed] });
-}
-
-async function sugerirProductos(message, args) {
-    if (args.length === 0) {
-        return message.reply('❌ Uso correcto: `!sugerir [término]`\nEjemplo: `!sugerir glock`');
-    }
-
-    const termino = args.join(' ').toLowerCase();
-    let sugerencias = [];
-
-    Object.keys(productosPredefindos).forEach(categoria => {
-        productosPredefindos[categoria].forEach(producto => {
-            if (producto.includes(termino)) {
-                sugerencias.push({ producto, categoria });
-            }
-        });
-    });
-
-    if (sugerencias.length === 0) {
-        return message.reply(`❌ No se encontraron sugerencias para "${termino}".`);
-    }
-
-    const embed = new EmbedBuilder()
-        .setColor('#32cd32')
-        .setTitle('💡 Sugerencias de Productos')
-        .setDescription(`Productos sugeridos que contienen "${termino}":`)
-        .setTimestamp();
-
-    let descripcion = '';
-    sugerencias.slice(0, 15).forEach(({ producto, categoria }) => {
-        const enInventario = inventario.hasOwnProperty(producto) ? '✅' : '➕';
-        descripcion += `${enInventario} **${producto.charAt(0).toUpperCase() + producto.slice(1)}** (${categoria})\n`;
-    });
-
-    if (sugerencias.length > 15) {
-        descripcion += `\n... y ${sugerencias.length - 15} más`;
-    }
-
-    embed.addFields({ name: 'Sugerencias', value: descripcion, inline: false });
-
-    return message.reply({ embeds: [embed] });
-}
-
-async function crearProductosLote(message, args) {
-    if (args.length === 0) {
-        return message.reply('❌ Uso correcto: `!crear [producto1,producto2,producto3]`\nEjemplo: `!crear ak47,uzi,vintage`');
-    }
-
-    const productosTexto = args.join(' ');
-    const productos = productosTexto.split(',').map(p => p.trim().toLowerCase()).filter(p => p.length > 0);
-
-    if (productos.length === 0) {
-        return message.reply('❌ No se encontraron productos válidos. Separa los productos con comas.');
-    }
-
-    let nuevos = [];
-    let existentes = [];
-
-    productos.forEach(producto => {
-        if (!inventario.hasOwnProperty(producto)) {
-            inventario[producto] = 0;
-            nuevos.push(producto);
-        } else {
-            existentes.push(producto);
-        }
-    });
-
-    await guardarInventario();
-
-    const embed = new EmbedBuilder()
-        .setColor('#4169e1')
-        .setTitle('📦 Creación de Productos en Lote')
-        .setTimestamp();
-
-    let descripcion = '';
-    
-    if (nuevos.length > 0) {
-        descripcion += `✅ **Productos creados (${nuevos.length}):**\n`;
-        descripcion += nuevos.map(p => `• ${p.charAt(0).toUpperCase() + p.slice(1)}`).join('\n');
-        descripcion += '\n\n';
-    }
-
-    if (existentes.length > 0) {
-        descripcion += `⚠️ **Ya existían (${existentes.length}):**\n`;
-        descripcion += existentes.map(p => `• ${p.charAt(0).toUpperCase() + p.slice(1)}`).join('\n');
-    }
-
-    embed.setDescription(descripcion);
-
-    return message.reply({ embeds: [embed] });
-}
-
-async function importarProductos(message, args) {
-    if (args.length === 0) {
-        return message.reply('❌ Uso correcto: `!importar [categoría]`\nEjemplo: `!importar armas`\nUsa `!categorias` para ver las categorías disponibles.');
-    }
-
-    const categoria = args.join(' ').toLowerCase();
-    
-    if (!productosPredefindos[categoria]) {
-        return message.reply(`❌ La categoría "${categoria}" no existe. Usa \`!categorias\` para ver las categorías disponibles.`);
-    }
-
-    const productos = productosPredefindos[categoria];
-    let nuevos = [];
-    let existentes = [];
-
-    productos.forEach(producto => {
-        if (!inventario.hasOwnProperty(producto)) {
-            inventario[producto] = 0;
-            nuevos.push(producto);
-        } else {
-            existentes.push(producto);
-        }
-    });
-
-    await guardarInventario();
-
-    const embed = new EmbedBuilder()
-        .setColor('#ff8c00')
-        .setTitle(`📥 Importar Categoría: ${categoria.charAt(0).toUpperCase() + categoria.slice(1)}`)
-        .setTimestamp();
-
-    let descripcion = `**Total de productos en la categoría:** ${productos.length}\n\n`;
-    
-    if (nuevos.length > 0) {
-        descripcion += `✅ **Productos importados (${nuevos.length}):**\n`;
-        descripcion += nuevos.map(p => `• ${p.charAt(0).toUpperCase() + p.slice(1)}`).join('\n');
-        descripcion += '\n\n';
-    }
-
-    if (existentes.length > 0) {
-        descripcion += `⚠️ **Ya existían (${existentes.length}):**\n`;
-        descripcion += existentes.map(p => `• ${p.charAt(0).toUpperCase() + p.slice(1)}`).join('\n');
-    }
-
-    if (nuevos.length === 0 && existentes.length === productos.length) {
-        descripcion += '✅ Todos los productos de esta categoría ya estaban en el inventario.';
-    }
-
-    embed.setDescription(descripcion);
-
-    return message.reply({ embeds: [embed] });
-}
-
-async function mostrarAyuda(message) {
+// Comandos
+async function ayuda(message) {
     const embed = new EmbedBuilder()
         .setColor('#ff0000')
-        .setTitle('🔫 Bot de Inventario GTA RP - Comandos')
-        .setDescription('Lista de comandos disponibles para la banda:')
+        .setTitle('🔫 Bot Inventario GTA RP')
         .addFields(
-            { name: '**!agregar [item] [cantidad]**', value: 'Agrega items al inventario\nEjemplo: `!agregar glock 5`', inline: false },
-            { name: '**!quitar [item] [cantidad]**', value: 'Quita items del inventario\nEjemplo: `!quitar beretta 2`', inline: false },
-            { name: '**!stock [item]**', value: 'Muestra el stock de un item específico\nEjemplo: `!stock vintage`', inline: false },
-            { name: '**!inventario**', value: 'Muestra todo el inventario de la banda', inline: false },
-            { name: '**!buscar [término]**', value: 'Busca items que contengan el término\nEjemplo: `!buscar glock`', inline: false },
-            { name: '**!categorias**', value: 'Muestra todas las categorías disponibles', inline: false },
-            { name: '**!categoria [nombre]**', value: 'Muestra items de una categoría\nEjemplo: `!categoria armas`', inline: false },
-            { name: '**!sugerir [término]**', value: 'Sugiere items similares\nEjemplo: `!sugerir pistol`', inline: false },
-            { name: '**!crear [item1,item2,...]**', value: 'Crea múltiples items a la vez\nEjemplo: `!crear ak47,uzi,vintage`', inline: false },
-            { name: '**!importar [categoría]**', value: 'Importa todos los items de una categoría\nEjemplo: `!importar planos`', inline: false },
-            { name: '**!limpiar**', value: 'Limpia todo el inventario (requiere confirmación)', inline: false }
+            { name: '!agregar [item] [cantidad]', value: 'Agrega items', inline: false },
+            { name: '!quitar [item] [cantidad]', value: 'Quita items', inline: false },
+            { name: '!stock [item]', value: 'Ver stock de un item', inline: false },
+            { name: '!inventario', value: 'Ver todo el inventario', inline: false },
+            { name: '!buscar [término]', value: 'Buscar items', inline: false },
+            { name: '!categorias', value: 'Ver categorías disponibles', inline: false },
+            { name: '!categoria [nombre]', value: 'Ver items de categoría', inline: false },
+            { name: '!importar [categoría]', value: 'Importar categoría completa', inline: false },
+            { name: '!guardar', value: 'Guardar inventario manualmente', inline: false },
+            { name: '!limpiar', value: 'Limpiar inventario', inline: false }
         )
-        .setFooter({ text: 'Bot de Inventario GTA RP v3.3 - Sin Duplicados Definitivo' })
         .setTimestamp();
-
+    
     return message.reply({ embeds: [embed] });
 }
 
-async function agregarProducto(message, args) {
+async function agregar(message, args) {
     if (args.length < 2) {
-        return message.reply('❌ Uso correcto: `!agregar [producto] [cantidad]`\nEjemplo: `!agregar glock 50`');
+        return message.reply('❌ Uso: `!agregar [item] [cantidad]`');
     }
 
-    const cantidad = parseInt(args[args.length - 1]);
+    const cantidad = parseInt(args.pop());
+    const item = args.join(' ').toLowerCase();
+    
     if (isNaN(cantidad) || cantidad <= 0) {
-        return message.reply('❌ La cantidad debe ser un número positivo.');
+        return message.reply('❌ Cantidad debe ser un número positivo');
     }
 
-    const producto = args.slice(0, -1).join(' ').toLowerCase();
+    if (!inventario[item]) inventario[item] = 0;
+    inventario[item] += cantidad;
     
-    if (!inventario[producto]) {
-        inventario[producto] = 0;
-    }
+    const guardado = await guardarInventario();
     
-    inventario[producto] += cantidad;
-
-    await guardarInventario();
-
     const embed = new EmbedBuilder()
         .setColor('#28a745')
-        .setTitle('✅ Producto Agregado')
+        .setTitle('✅ Item Agregado')
         .addFields(
-            { name: 'Producto', value: producto.charAt(0).toUpperCase() + producto.slice(1), inline: true },
-            { name: 'Cantidad Agregada', value: cantidad.toString(), inline: true },
-            { name: 'Stock Total', value: inventario[producto].toString(), inline: true }
+            { name: 'Item', value: item, inline: true },
+            { name: 'Agregado', value: cantidad.toString(), inline: true },
+            { name: 'Total', value: inventario[item].toString(), inline: true }
         )
+        .setFooter({ text: guardado ? '💾 Guardado automáticamente' : '❌ Error al guardar' })
         .setTimestamp();
 
     return message.reply({ embeds: [embed] });
 }
 
-async function quitarProducto(message, args) {
+async function quitar(message, args) {
     if (args.length < 2) {
-        return message.reply('❌ Uso correcto: `!quitar [producto] [cantidad]`\nEjemplo: `!quitar glock 10`');
+        return message.reply('❌ Uso: `!quitar [item] [cantidad]`');
     }
 
-    const cantidad = parseInt(args[args.length - 1]);
+    const cantidad = parseInt(args.pop());
+    const item = args.join(' ').toLowerCase();
+    
     if (isNaN(cantidad) || cantidad <= 0) {
-        return message.reply('❌ La cantidad debe ser un número positivo.');
+        return message.reply('❌ Cantidad debe ser un número positivo');
     }
 
-    const producto = args.slice(0, -1).join(' ').toLowerCase();
-    
-    if (!inventario[producto]) {
-        return message.reply(`❌ El producto "${producto}" no existe en el inventario.`);
+    if (!inventario[item]) {
+        return message.reply(`❌ "${item}" no existe en inventario`);
     }
 
-    if (inventario[producto] < cantidad) {
-        return message.reply(`❌ No hay suficiente stock. Stock actual: ${inventario[producto]}`);
+    if (inventario[item] < cantidad) {
+        return message.reply(`❌ Stock insuficiente. Actual: ${inventario[item]}`);
     }
     
-    inventario[producto] -= cantidad;
-
-    await guardarInventario();
+    inventario[item] -= cantidad;
+    const guardado = await guardarInventario();
 
     const embed = new EmbedBuilder()
         .setColor('#dc3545')
-        .setTitle('📤 Producto Retirado')
+        .setTitle('📤 Item Retirado')
         .addFields(
-            { name: 'Producto', value: producto.charAt(0).toUpperCase() + producto.slice(1), inline: true },
-            { name: 'Cantidad Retirada', value: cantidad.toString(), inline: true },
-            { name: 'Stock Restante', value: inventario[producto].toString(), inline: true }
+            { name: 'Item', value: item, inline: true },
+            { name: 'Retirado', value: cantidad.toString(), inline: true },
+            { name: 'Restante', value: inventario[item].toString(), inline: true }
         )
+        .setFooter({ text: guardado ? '💾 Guardado automáticamente' : '❌ Error al guardar' })
         .setTimestamp();
-
-    if (inventario[producto] === 0) {
-        embed.setDescription('⚠️ **Stock agotado**');
-    }
 
     return message.reply({ embeds: [embed] });
 }
 
-async function mostrarStock(message, args) {
+async function stock(message, args) {
     if (args.length === 0) {
-        return message.reply('❌ Uso correcto: `!stock [producto]`\nEjemplo: `!stock glock`');
+        return message.reply('❌ Uso: `!stock [item]`');
     }
 
-    const producto = args.join(' ').toLowerCase();
+    const item = args.join(' ').toLowerCase();
     
-    if (!inventario.hasOwnProperty(producto)) {
-        return message.reply(`❌ El producto "${producto}" no existe en el inventario.`);
+    if (!inventario[item]) {
+        return message.reply(`❌ "${item}" no existe en inventario`);
     }
 
-    const stock = inventario[producto];
-    const color = stock === 0 ? '#dc3545' : stock < 10 ? '#ffc107' : '#28a745';
-    const estado = stock === 0 ? '🔴 Agotado' : stock < 10 ? '🟡 Stock Bajo' : '🟢 Stock Normal';
+    const cantidad = inventario[item];
+    const color = cantidad === 0 ? '#dc3545' : cantidad < 10 ? '#ffc107' : '#28a745';
+    const estado = cantidad === 0 ? '🔴 Agotado' : cantidad < 10 ? '🟡 Bajo' : '🟢 Normal';
 
     const embed = new EmbedBuilder()
         .setColor(color)
-        .setTitle('📊 Consulta de Stock')
+        .setTitle('📊 Stock')
         .addFields(
-            { name: 'Producto', value: producto.charAt(0).toUpperCase() + producto.slice(1), inline: true },
-            { name: 'Cantidad', value: stock.toString(), inline: true },
+            { name: 'Item', value: item, inline: true },
+            { name: 'Cantidad', value: cantidad.toString(), inline: true },
             { name: 'Estado', value: estado, inline: true }
         )
         .setTimestamp();
@@ -423,89 +170,183 @@ async function mostrarStock(message, args) {
     return message.reply({ embeds: [embed] });
 }
 
-// 🔧 FUNCIÓN COMPLETAMENTE CORREGIDA - UNA SOLA RESPUESTA
-async function mostrarInventarioCompleto(message) {
-    const productos = Object.keys(inventario);
+async function mostrarInventario(message) {
+    const items = Object.keys(inventario);
     
-    if (productos.length === 0) {
-        return message.reply('📦 El inventario está vacío.');
+    if (items.length === 0) {
+        return message.reply('📦 Inventario vacío');
     }
 
     let descripcion = '';
-    let totalProductos = 0;
-    let totalUnidades = 0;
+    let totalItems = 0, totalUnidades = 0;
 
-    productos.sort().forEach(producto => {
-        const stock = inventario[producto];
-        const estado = stock === 0 ? '🔴' : stock < 10 ? '🟡' : '🟢';
-        descripcion += `${estado} **${producto.charAt(0).toUpperCase() + producto.slice(1)}**: ${stock} unidades\n`;
-        totalProductos++;
-        totalUnidades += stock;
+    items.sort().forEach(item => {
+        const cantidad = inventario[item];
+        const estado = cantidad === 0 ? '🔴' : cantidad < 10 ? '🟡' : '🟢';
+        descripcion += `${estado} **${item}**: ${cantidad}\n`;
+        totalItems++;
+        totalUnidades += cantidad;
     });
 
-    // Crear el embed principal
     const embed = new EmbedBuilder()
         .setColor('#17a2b8')
-        .setTitle('📋 Inventario Completo - GTA RP')
-        .setTimestamp()
+        .setTitle('📋 Inventario Completo')
+        .setDescription(descripcion.length > 4000 ? descripcion.substring(0, 4000) + '...' : descripcion)
         .addFields(
-            { name: 'Total de Productos', value: totalProductos.toString(), inline: true },
-            { name: 'Total de Unidades', value: totalUnidades.toString(), inline: true },
-            { name: 'Leyenda', value: '🟢 Stock Normal | 🟡 Stock Bajo | 🔴 Agotado', inline: false }
-        );
+            { name: 'Total Items', value: totalItems.toString(), inline: true },
+            { name: 'Total Unidades', value: totalUnidades.toString(), inline: true },
+            { name: 'Leyenda', value: '🟢 Normal | 🟡 Bajo | 🔴 Agotado', inline: false }
+        )
+        .setTimestamp();
 
-    // Si la descripción es muy larga, dividirla
-    if (descripcion.length > 4000) {
-        const mitad = descripcion.length / 2;
-        const puntoCorte = descripcion.lastIndexOf('\n', mitad);
-        
-        embed.setDescription(descripcion.substring(0, puntoCorte));
-        embed.addFields({ name: 'Continuación del Inventario', value: descripcion.substring(puntoCorte + 1), inline: false });
-    } else {
-        embed.setDescription(descripcion);
-    }
-
-    // ✅ UNA SOLA RESPUESTA GARANTIZADA
     return message.reply({ embeds: [embed] });
 }
 
-async function buscarProducto(message, args) {
+async function buscar(message, args) {
     if (args.length === 0) {
-        return message.reply('❌ Uso correcto: `!buscar [término]`\nEjemplo: `!buscar glock`');
+        return message.reply('❌ Uso: `!buscar [término]`');
     }
 
     const termino = args.join(' ').toLowerCase();
-    const productosEncontrados = Object.keys(inventario).filter(producto => 
-        producto.includes(termino)
-    );
+    const encontrados = Object.keys(inventario).filter(item => item.includes(termino));
 
-    if (productosEncontrados.length === 0) {
-        return message.reply(`❌ No se encontraron productos que contengan "${termino}".`);
+    if (encontrados.length === 0) {
+        return message.reply(`❌ No se encontró "${termino}"`);
     }
+
+    let descripcion = '';
+    encontrados.forEach(item => {
+        const cantidad = inventario[item];
+        const estado = cantidad === 0 ? '🔴' : cantidad < 10 ? '🟡' : '🟢';
+        descripcion += `${estado} **${item}**: ${cantidad}\n`;
+    });
 
     const embed = new EmbedBuilder()
         .setColor('#6f42c1')
-        .setTitle('🔍 Resultados de Búsqueda')
-        .setDescription(`Productos que contienen "${termino}":`)
+        .setTitle('🔍 Búsqueda')
+        .setDescription(`Resultados para "${termino}":\n\n${descripcion}`)
         .setTimestamp();
-
-    let descripcion = '';
-    productosEncontrados.forEach(producto => {
-        const stock = inventario[producto];
-        const estado = stock === 0 ? '🔴' : stock < 10 ? '🟡' : '🟢';
-        descripcion += `${estado} **${producto.charAt(0).toUpperCase() + producto.slice(1)}**: ${stock} unidades\n`;
-    });
-
-    embed.addFields({ name: 'Productos Encontrados', value: descripcion, inline: false });
 
     return message.reply({ embeds: [embed] });
 }
 
-async function limpiarInventario(message) {
+async function categorias(message) {
+    const embed = new EmbedBuilder()
+        .setColor('#8b0000')
+        .setTitle('🗂️ Categorías')
+        .setTimestamp();
+
+    Object.keys(productos).forEach(cat => {
+        const items = productos[cat];
+        const muestra = items.slice(0, 3).join(', ') + (items.length > 3 ? '...' : '');
+        
+        const emoji = { 'armas': '🔫', 'cargadores': '📦', 'drogas': '💊', 'planos': '🗺️' }[cat] || '📋';
+        
+        embed.addFields({
+            name: `${emoji} ${cat.charAt(0).toUpperCase() + cat.slice(1)}`,
+            value: muestra,
+            inline: true
+        });
+    });
+
+    return message.reply({ embeds: [embed] });
+}
+
+async function categoria(message, args) {
+    if (args.length === 0) {
+        return message.reply('❌ Uso: `!categoria [nombre]`');
+    }
+
+    const cat = args.join(' ').toLowerCase();
+    
+    if (!productos[cat]) {
+        return message.reply('❌ Categoría no existe. Usa `!categorias`');
+    }
+
+    let descripcion = '';
+    productos[cat].forEach(item => {
+        const enInventario = inventario[item] !== undefined;
+        const stock = enInventario ? inventario[item] : 0;
+        const estado = enInventario ? (stock > 0 ? '✅' : '⚪') : '➕';
+        
+        descripcion += `${estado} ${item}`;
+        if (enInventario) descripcion += ` (${stock})`;
+        descripcion += '\n';
+    });
+
+    const embed = new EmbedBuilder()
+        .setColor('#ff6347')
+        .setTitle(`🏷️ ${cat.charAt(0).toUpperCase() + cat.slice(1)}`)
+        .setDescription(descripcion)
+        .addFields({
+            name: 'Leyenda',
+            value: '✅ En inventario | ⚪ Sin stock | ➕ No añadido',
+            inline: false
+        })
+        .setTimestamp();
+
+    return message.reply({ embeds: [embed] });
+}
+
+async function importar(message, args) {
+    if (args.length === 0) {
+        return message.reply('❌ Uso: `!importar [categoría]`');
+    }
+
+    const cat = args.join(' ').toLowerCase();
+    
+    if (!productos[cat]) {
+        return message.reply('❌ Categoría no existe');
+    }
+
+    let nuevos = [], existentes = [];
+
+    productos[cat].forEach(item => {
+        if (!inventario[item]) {
+            inventario[item] = 0;
+            nuevos.push(item);
+        } else {
+            existentes.push(item);
+        }
+    });
+
+    const guardado = await guardarInventario();
+
+    const embed = new EmbedBuilder()
+        .setColor('#ff8c00')
+        .setTitle(`📥 Importar: ${cat}`)
+        .setDescription(
+            (nuevos.length > 0 ? `✅ **Importados (${nuevos.length}):**\n${nuevos.join(', ')}\n\n` : '') +
+            (existentes.length > 0 ? `⚠️ **Ya existían (${existentes.length}):**\n${existentes.join(', ')}` : '')
+        )
+        .setFooter({ text: guardado ? '💾 Guardado automáticamente' : '❌ Error al guardar' })
+        .setTimestamp();
+
+    return message.reply({ embeds: [embed] });
+}
+
+async function guardarManual(message) {
+    const guardado = await guardarInventario();
+    
+    const embed = new EmbedBuilder()
+        .setColor(guardado ? '#28a745' : '#dc3545')
+        .setTitle(guardado ? '✅ Guardado Exitoso' : '❌ Error al Guardar')
+        .setDescription(guardado ? 'Inventario guardado correctamente' : 'Error al guardar el inventario')
+        .addFields({
+            name: 'Items en inventario',
+            value: Object.keys(inventario).length.toString(),
+            inline: true
+        })
+        .setTimestamp();
+
+    return message.reply({ embeds: [embed] });
+}
+
+async function limpiar(message) {
     const embed = new EmbedBuilder()
         .setColor('#dc3545')
-        .setTitle('⚠️ Confirmar Limpieza de Inventario')
-        .setDescription('¿Estás seguro de que quieres limpiar todo el inventario?\nEscribe `confirmar` para continuar o `cancelar` para abortar.')
+        .setTitle('⚠️ Confirmar Limpieza')
+        .setDescription('Escribe `confirmar` para limpiar todo o `cancelar`')
         .setTimestamp();
 
     await message.reply({ embeds: [embed] });
@@ -517,181 +358,78 @@ async function limpiarInventario(message) {
 
     try {
         const collected = await message.channel.awaitMessages({ 
-            filter, 
-            max: 1, 
-            time: 30000, 
-            errors: ['time'] 
+            filter, max: 1, time: 30000, errors: ['time'] 
         });
 
         const respuesta = collected.first().content.toLowerCase();
 
         if (respuesta === 'confirmar') {
             inventario = {};
-            await guardarInventario();
+            const guardado = await guardarInventario();
             
             const confirmEmbed = new EmbedBuilder()
                 .setColor('#28a745')
                 .setTitle('✅ Inventario Limpiado')
-                .setDescription('El inventario ha sido completamente limpiado y guardado.')
+                .setDescription('Inventario completamente limpiado')
+                .setFooter({ text: guardado ? '💾 Guardado' : '❌ Error al guardar' })
                 .setTimestamp();
             
             return message.channel.send({ embeds: [confirmEmbed] });
         } else {
-            return message.channel.send('❌ Limpieza de inventario cancelada.');
+            return message.channel.send('❌ Limpieza cancelada');
         }
-    } catch (error) {
-        return message.channel.send('⏰ Tiempo agotado. Limpieza de inventario cancelada.');
+    } catch {
+        return message.channel.send('⏰ Tiempo agotado. Cancelado');
     }
 }
 
-// 🔧 LIMPIEZA DE CACHE CADA 2 MINUTOS
-setInterval(() => {
-    limpiarMensajesAntiguos();
-    console.log(`🧹 Cache limpiado. Mensajes en cache: ${mensajesProcesados.size}`);
-}, 2 * 60 * 1000);
-
-// Prefijo para los comandos
-const PREFIX = '!';
-
+// Event listeners
 client.once('ready', async () => {
-    console.log(`✅ Bot conectado como ${client.user.tag}!`);
-    console.log(`🔗 ID del bot: ${client.user.id}`);
-    console.log(`📊 Conectado a ${client.guilds.cache.size} servidor(es)`);
-    client.user.setActivity('Gestionando inventario de la banda 🔫', { type: ActivityType.Watching });
-    
+    console.log(`✅ Bot conectado: ${client.user.tag}`);
+    client.user.setActivity('Inventario GTA RP 🔫', { type: ActivityType.Watching });
     await cargarInventario();
-    await inicializarProductosBasicos();
 });
 
-// 🔧 EVENT LISTENER COMPLETAMENTE REESCRITO Y MEJORADO
 client.on('messageCreate', async (message) => {
-    // Verificaciones básicas
-    if (message.author.bot || !message.content.startsWith(PREFIX)) {
-        return;
-    }
+    if (message.author.bot || !message.content.startsWith('!')) return;
     
-    // 🔧 CREAR ID ÚNICO PARA EVITAR DUPLICADOS
-    const messageKey = `${message.id}_${message.author.id}_${Date.now()}`;
+    const messageId = message.id;
+    if (mensajesProcesados.has(messageId)) return;
     
-    // 🔧 VERIFICAR SI YA ESTÁ PROCESANDO
-    if (mensajesProcesados.has(messageKey) || mensajesProcesados.has(message.id)) {
-        console.log(`⚠️ Mensaje duplicado detectado y bloqueado: ${message.id}`);
-        return;
-    }
-    
-    // 🔧 MARCAR INMEDIATAMENTE COMO PROCESADO
-    mensajesProcesados.add(messageKey);
-    mensajesProcesados.add(message.id);
-    
-    // 🔧 LIMPIAR DESPUÉS DE 10 SEGUNDOS
-    setTimeout(() => {
-        mensajesProcesados.delete(messageKey);
-        mensajesProcesados.delete(message.id);
-    }, 10000);
+    mensajesProcesados.add(messageId);
+    setTimeout(() => mensajesProcesados.delete(messageId), 30000);
 
-    const args = message.content.slice(PREFIX.length).trim().split(/ +/);
+    const args = message.content.slice(1).trim().split(/ +/);
     const comando = args.shift().toLowerCase();
-
-    console.log(`🎯 Procesando comando: ${comando} de usuario: ${message.author.username}`);
 
     try {
         switch (comando) {
-            case 'ayuda':
-            case 'help':
-                await mostrarAyuda(message);
-                break;
-
-            case 'agregar':
-            case 'add':
-                await agregarProducto(message, args);
-                break;
-
-            case 'quitar':
-            case 'remove':
-                await quitarProducto(message, args);
-                break;
-
-            case 'stock':
-                await mostrarStock(message, args);
-                break;
-
-            case 'inventario':
-            case 'lista':
-                await mostrarInventarioCompleto(message);
-                break;
-
-            case 'buscar':
-            case 'search':
-                await buscarProducto(message, args);
-                break;
-
-            case 'limpiar':
-            case 'clear':
-                await limpiarInventario(message);
-                break;
-
-            case 'categorias':
-            case 'categories':
-                await mostrarCategorias(message);
-                break;
-
-            case 'categoria':
-            case 'category':
-                await mostrarProductosCategoria(message, args);
-                break;
-
-            case 'sugerir':
-            case 'suggest':
-                await sugerirProductos(message, args);
-                break;
-
-            case 'crear':
-            case 'create':
-                await crearProductosLote(message, args);
-                break;
-
-            case 'importar':
-            case 'import':
-                await importarProductos(message, args);
-                break;
-
-            default:
-                await message.reply('❌ Comando no reconocido. Usa `!ayuda` para ver los comandos disponibles.');
+            case 'ayuda': case 'help': await ayuda(message); break;
+            case 'agregar': case 'add': await agregar(message, args); break;
+            case 'quitar': case 'remove': await quitar(message, args); break;
+            case 'stock': await stock(message, args); break;
+            case 'inventario': case 'lista': await mostrarInventario(message); break;
+            case 'buscar': case 'search': await buscar(message, args); break;
+            case 'categorias': await categorias(message); break;
+            case 'categoria': await categoria(message, args); break;
+            case 'importar': await importar(message, args); break;
+            case 'guardar': case 'save': await guardarManual(message); break;
+            case 'limpiar': case 'clear': await limpiar(message); break;
+            default: await message.reply('❌ Comando no reconocido. Usa `!ayuda`');
         }
-        
-        console.log(`✅ Comando ${comando} procesado exitosamente`);
-        
     } catch (error) {
-        console.error('❌ Error al procesar comando:', error);
-        
-        try {
-            await message.reply('❌ Ocurrió un error al procesar el comando. Intenta nuevamente.');
-        } catch (replyError) {
-            console.error('❌ Error al enviar mensaje de error:', replyError);
-        }
+        console.error('Error:', error);
+        await message.reply('❌ Error al procesar comando');
     }
 });
 
-client.on('error', (error) => {
-    console.error('❌ Error del cliente Discord:', error);
-});
-
-client.on('warn', (info) => {
-    console.warn('⚠️ Advertencia:', info);
-});
-
-// ✅ VALIDACIÓN MEJORADA: Verificar que el token está configurado
+// Iniciar bot
 if (!DISCORD_TOKEN) {
-    console.error('❌ ERROR: Debes configurar tu token de Discord');
-    console.error('🔗 Ve a https://discord.com/developers/applications para obtener tu token');
-    console.error('📝 Configura la variable de entorno DISCORD_TOKEN en Render');
-    console.error('🌐 Guía: https://render.com/docs/environment-variables');
+    console.error('❌ Configura DISCORD_TOKEN en variables de entorno');
     process.exit(1);
 }
 
-// Conectar el bot
-console.log('🚀 Iniciando bot...');
 client.login(DISCORD_TOKEN).catch(error => {
-    console.error('❌ Error al conectar el bot:', error);
+    console.error('❌ Error al conectar:', error);
     process.exit(1);
 });
