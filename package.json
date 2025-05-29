@@ -1,10 +1,10 @@
 {
-  "name": "discord-inventory-bot",
+  "name": "Faliyoo",
   "version": "1.0.0",
   "description": "Bot de inventario para GTA RP en Discord",
   "main": "faliyoo.js",
   "scripts": {
-    "start": "node faliyoo.js",
+    "start": "node faliyoo.js",-
     "dev": "node faliyoo.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
