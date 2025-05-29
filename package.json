@@ -1,23 +1,20 @@
 {
-  "name": "faliyo",
+  "name": "discord-inventory-bot",
   "version": "1.0.0",
-  "main": "faliyo.js",
+  "description": "Bot de inventario para GTA RP en Discord",
+  "main": "index.js",
   "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/v4killa/faliyo.git"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/v4killa/faliyo/issues"
-  },
-  "homepage": "https://github.com/v4killa/faliyo#readme",
-  "description": "",
+  "keywords": ["discord", "bot", "inventory", "gta-rp"],
+  "author": "Tu Nombre",
+  "license": "MIT",
   "dependencies": {
-    "discord.js": "^14.19.3"
+    "discord.js": "^14.14.1"
+  },
+  "engines": {
+    "node": ">=16.0.0"
   }
 }
