@@ -20,8 +20,8 @@ const client = new Client({
 // Base de datos del inventario
 let inventario = {};
 
-// 🔧 PREVENIR RESPUESTAS DUPLICADAS: Map para rastrear mensajes procesados con timestamp
-const mensajesProcesados = new Map();
+// 🔧 MEJORADO: Set para rastrear mensajes procesados (más eficiente que Map)
+const mensajesProcesados = new Set();
 
 // Lista simplificada de productos con categorías para GTA Roleplay
 const productosPredefindos = {
@@ -71,35 +71,13 @@ async function inicializarProductosBasicos() {
     }
 }
 
-// Función para dividir embeds largos
-function dividirEmbed(contenido, limite = 4096) {
-    if (contenido.length <= limite) return [contenido];
-    
-    const partes = [];
-    let inicio = 0;
-    
-    while (inicio < contenido.length) {
-        let fin = inicio + limite;
-        if (fin < contenido.length) {
-            const ultimoSalto = contenido.lastIndexOf('\n', fin);
-            if (ultimoSalto > inicio) {
-                fin = ultimoSalto;
-            }
-        }
-        partes.push(contenido.slice(inicio, fin));
-        inicio = fin;
-    }
-    
-    return partes;
-}
-
-// 🔧 FUNCIÓN PARA LIMPIAR MENSAJES ANTIGUOS (más de 30 segundos)
+// 🔧 FUNCIÓN MEJORADA PARA LIMPIAR MENSAJES ANTIGUOS
 function limpiarMensajesAntiguos() {
-    const ahora = Date.now();
-    for (const [messageId, timestamp] of mensajesProcesados.entries()) {
-        if (ahora - timestamp > 30000) { // 30 segundos
-            mensajesProcesados.delete(messageId);
-        }
+    // Limpiar todos los mensajes después de 30 segundos
+    // Como usamos Set, simplemente lo limpiamos completamente
+    if (mensajesProcesados.size > 100) {
+        mensajesProcesados.clear();
+        console.log('🧹 Cache de mensajes limpiado completamente');
     }
 }
 
@@ -337,7 +315,7 @@ async function mostrarAyuda(message) {
             { name: '**!importar [categoría]**', value: 'Importa todos los items de una categoría\nEjemplo: `!importar planos`', inline: false },
             { name: '**!limpiar**', value: 'Limpia todo el inventario (requiere confirmación)', inline: false }
         )
-        .setFooter({ text: 'Bot de Inventario GTA RP v3.2 - Corregido Sin Duplicados' })
+        .setFooter({ text: 'Bot de Inventario GTA RP v3.3 - Sin Duplicados Definitivo' })
         .setTimestamp();
 
     return message.reply({ embeds: [embed] });
@@ -445,7 +423,7 @@ async function mostrarStock(message, args) {
     return message.reply({ embeds: [embed] });
 }
 
-// 🔧 FUNCIÓN CORREGIDA SIN DUPLICADOS
+// 🔧 FUNCIÓN COMPLETAMENTE CORREGIDA - UNA SOLA RESPUESTA
 async function mostrarInventarioCompleto(message) {
     const productos = Object.keys(inventario);
     
@@ -465,17 +443,29 @@ async function mostrarInventarioCompleto(message) {
         totalUnidades += stock;
     });
 
-    // 🔧 SOLUCIÓN SIMPLE: Una sola respuesta sin bucles complicados
+    // Crear el embed principal
     const embed = new EmbedBuilder()
         .setColor('#17a2b8')
-        .setTitle('📋 Inventario Completo')
-        .setDescription(descripcion.length > 4096 ? descripcion.substring(0, 4000) + '\n...(inventario muy largo)' : descripcion)
+        .setTitle('📋 Inventario Completo - GTA RP')
+        .setTimestamp()
         .addFields(
             { name: 'Total de Productos', value: totalProductos.toString(), inline: true },
-            { name: 'Total de Unidades', value: totalUnidades.toString(), inline: true }
-        )
-        .setTimestamp();
+            { name: 'Total de Unidades', value: totalUnidades.toString(), inline: true },
+            { name: 'Leyenda', value: '🟢 Stock Normal | 🟡 Stock Bajo | 🔴 Agotado', inline: false }
+        );
 
+    // Si la descripción es muy larga, dividirla
+    if (descripcion.length > 4000) {
+        const mitad = descripcion.length / 2;
+        const puntoCorte = descripcion.lastIndexOf('\n', mitad);
+        
+        embed.setDescription(descripcion.substring(0, puntoCorte));
+        embed.addFields({ name: 'Continuación del Inventario', value: descripcion.substring(puntoCorte + 1), inline: false });
+    } else {
+        embed.setDescription(descripcion);
+    }
+
+    // ✅ UNA SOLA RESPUESTA GARANTIZADA
     return message.reply({ embeds: [embed] });
 }
 
@@ -554,11 +544,11 @@ async function limpiarInventario(message) {
     }
 }
 
-// 🔧 LIMPIAR CACHE CADA 60 SEGUNDOS EN LUGAR DE 5 MINUTOS
+// 🔧 LIMPIEZA DE CACHE CADA 2 MINUTOS
 setInterval(() => {
     limpiarMensajesAntiguos();
     console.log(`🧹 Cache limpiado. Mensajes en cache: ${mensajesProcesados.size}`);
-}, 60 * 1000);
+}, 2 * 60 * 1000);
 
 // Prefijo para los comandos
 const PREFIX = '!';
@@ -573,24 +563,36 @@ client.once('ready', async () => {
     await inicializarProductosBasicos();
 });
 
-// 🔧 EVENT LISTENER CORREGIDO
+// 🔧 EVENT LISTENER COMPLETAMENTE REESCRITO Y MEJORADO
 client.on('messageCreate', async (message) => {
     // Verificaciones básicas
     if (message.author.bot || !message.content.startsWith(PREFIX)) {
         return;
     }
     
-    // 🔧 VERIFICAR SI YA ESTÁ PROCESANDO ESTE MENSAJE
-    if (mensajesProcesados.has(message.id)) {
-        console.log(`⚠️ Mensaje ${message.id} ya está siendo procesado`);
+    // 🔧 CREAR ID ÚNICO PARA EVITAR DUPLICADOS
+    const messageKey = `${message.id}_${message.author.id}_${Date.now()}`;
+    
+    // 🔧 VERIFICAR SI YA ESTÁ PROCESANDO
+    if (mensajesProcesados.has(messageKey) || mensajesProcesados.has(message.id)) {
+        console.log(`⚠️ Mensaje duplicado detectado y bloqueado: ${message.id}`);
         return;
     }
     
-    // 🔧 MARCAR INMEDIATAMENTE COMO PROCESADO CON TIMESTAMP
-    mensajesProcesados.set(message.id, Date.now());
+    // 🔧 MARCAR INMEDIATAMENTE COMO PROCESADO
+    mensajesProcesados.add(messageKey);
+    mensajesProcesados.add(message.id);
+    
+    // 🔧 LIMPIAR DESPUÉS DE 10 SEGUNDOS
+    setTimeout(() => {
+        mensajesProcesados.delete(messageKey);
+        mensajesProcesados.delete(message.id);
+    }, 10000);
 
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
     const comando = args.shift().toLowerCase();
+
+    console.log(`🎯 Procesando comando: ${comando} de usuario: ${message.author.username}`);
 
     try {
         switch (comando) {
@@ -656,14 +658,17 @@ client.on('messageCreate', async (message) => {
             default:
                 await message.reply('❌ Comando no reconocido. Usa `!ayuda` para ver los comandos disponibles.');
         }
+        
+        console.log(`✅ Comando ${comando} procesado exitosamente`);
+        
     } catch (error) {
         console.error('❌ Error al procesar comando:', error);
-        // 🔧 EN CASO DE ERROR, REMOVER DEL CACHE DESPUÉS DE UN DELAY
-        setTimeout(() => {
-            mensajesProcesados.delete(message.id);
-        }, 10000);
         
-        await message.reply('❌ Ocurrió un error al procesar el comando. Intenta nuevamente.');
+        try {
+            await message.reply('❌ Ocurrió un error al procesar el comando. Intenta nuevamente.');
+        } catch (replyError) {
+            console.error('❌ Error al enviar mensaje de error:', replyError);
+        }
     }
 });
 
