@@ -3,7 +3,7 @@ const fs = require('fs').promises;
 const path = require('path');
 
 // ⚠️ IMPORTANTE: Reemplaza 'TU_TOKEN_AQUI' con tu token real de Discord
-const DISCORD_TOKEN = 'MTM1OTg5OTEwOTUxODk5OTU4Mg.GhMYia.Un6ldPdUrqP5HR84u1lpXUwgkU1CvFHF7uz0Gk';
+const DISCORD_TOKEN = 'MTM1OTg5OTEwOTUxODk5OTU4Mg.GOY-N3.8G5aFFr2bYFLQeN7IW1fidBJJt1dQHZRlwxKdI';
 
 // Archivo para guardar el inventario
 const INVENTARIO_FILE = path.join(__dirname, 'inventario.json');
@@ -661,7 +661,7 @@ client.on('warn', (info) => {
 });
 
 // Verificar que el token está configurado
-if (!DISCORD_TOKEN || DISCORD_TOKEN === 'TU_TOKEN_AQUI') {
+if (!DISCORD_TOKEN || DISCORD_TOKEN === 'MTM1OTg5OTEwOTUxODk5OTU4Mg.GOY-N3.8G5aFFr2bYFLQeN7IW1fidBJJt1dQHZRlwxKdI') {
     console.error('❌ ERROR: Debes configurar tu token de Discord');
     console.error('🔗 Ve a https://discord.com/developers/applications para obtener tu token');
     console.error('📝 Reemplaza "TU_TOKEN_AQUI" con tu token real en la línea 5');
