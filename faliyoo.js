@@ -21,6 +21,12 @@ const client = new Client({
 // Inventario en memoria
 let inventario = {};
 
+// Variable para evitar procesamiento múltiple
+let isProcessing = false;
+
+// Cache para evitar procesar el mismo mensaje múltiples veces
+const processedMessages = new Set();
+
 // Productos predefinidos por categorías
 const categorias = {
     'armas': ['vintage', 'glock', 'beretta', 'ak47', 'uzi'],
@@ -96,7 +102,7 @@ const commands = {
             .setFooter({ text: 'Inventario con persistencia JSON' })
             .setTimestamp();
 
-        await message.reply({ embeds: [embed] });
+        return message.reply({ embeds: [embed] });
     },
 
     // Agregar producto
@@ -126,7 +132,7 @@ const commands = {
             .setFooter({ text: guardado ? 'Guardado en JSON ✅' : 'Error al guardar ❌' })
             .setTimestamp();
 
-        await message.reply({ embeds: [embed] });
+        return message.reply({ embeds: [embed] });
     },
 
     // Quitar producto
@@ -164,7 +170,7 @@ const commands = {
             .setFooter({ text: guardado ? 'Guardado en JSON ✅' : 'Error al guardar ❌' })
             .setTimestamp();
 
-        await message.reply({ embeds: [embed] });
+        return message.reply({ embeds: [embed] });
     },
 
     // Ver stock específico
@@ -188,10 +194,10 @@ const commands = {
             )
             .setTimestamp();
 
-        await message.reply({ embeds: [embed] });
+        return message.reply({ embeds: [embed] });
     },
 
-    // Ver inventario completo
+    // Ver inventario completo - CORREGIDO
     async inventory(message) {
         const productos = Object.keys(inventario);
         
@@ -213,22 +219,41 @@ const commands = {
 
         const partes = dividirTexto(descripcion);
         
-        for (let i = 0; i < partes.length; i++) {
-            const embed = new EmbedBuilder()
+        // Enviar solo la primera parte como reply
+        const embed = new EmbedBuilder()
+            .setColor('#17a2b8')
+            .setTitle(`📋 Inventario ${partes.length > 1 ? `(1/${partes.length})` : ''}`)
+            .setDescription(partes[0])
+            .setTimestamp();
+
+        if (partes.length === 1) {
+            embed.addFields(
+                { name: 'Total Items', value: totalItems.toString(), inline: true },
+                { name: 'Total Unidades', value: totalUnidades.toString(), inline: true }
+            );
+        }
+
+        const initialReply = await message.reply({ embeds: [embed] });
+
+        // Enviar partes adicionales como follow-ups
+        for (let i = 1; i < partes.length; i++) {
+            const followUpEmbed = new EmbedBuilder()
                 .setColor('#17a2b8')
-                .setTitle(`📋 Inventario ${partes.length > 1 ? `(${i + 1}/${partes.length})` : ''}`)
+                .setTitle(`📋 Inventario (${i + 1}/${partes.length})`)
                 .setDescription(partes[i])
                 .setTimestamp();
 
             if (i === partes.length - 1) {
-                embed.addFields(
+                followUpEmbed.addFields(
                     { name: 'Total Items', value: totalItems.toString(), inline: true },
                     { name: 'Total Unidades', value: totalUnidades.toString(), inline: true }
                 );
             }
 
-            await message.reply({ embeds: [embed] });
+            await message.channel.send({ embeds: [followUpEmbed] });
         }
+
+        return initialReply;
     },
 
     // Buscar productos
@@ -253,7 +278,7 @@ const commands = {
             .setDescription(encontrados)
             .setTimestamp();
 
-        await message.reply({ embeds: [embed] });
+        return message.reply({ embeds: [embed] });
     },
 
     // Mostrar categorías
@@ -282,7 +307,7 @@ const commands = {
             });
         });
 
-        await message.reply({ embeds: [embed] });
+        return message.reply({ embeds: [embed] });
     },
 
     // Ver productos de una categoría
@@ -321,7 +346,7 @@ const commands = {
             })
             .setTimestamp();
 
-        await message.reply({ embeds: [embed] });
+        return message.reply({ embeds: [embed] });
     },
 
     // Importar categoría completa
@@ -369,7 +394,7 @@ const commands = {
         embed.setDescription(descripcion);
         embed.setFooter({ text: guardado ? 'Guardado en JSON ✅' : 'Error al guardar ❌' });
 
-        await message.reply({ embeds: [embed] });
+        return message.reply({ embeds: [embed] });
     },
 
     // Crear múltiples productos
@@ -419,7 +444,7 @@ const commands = {
         embed.setDescription(descripcion);
         embed.setFooter({ text: guardado ? 'Guardado en JSON ✅' : 'Error al guardar ❌' });
 
-        await message.reply({ embeds: [embed] });
+        return message.reply({ embeds: [embed] });
     },
 
     // Guardado manual
@@ -440,13 +465,14 @@ const commands = {
             })
             .setTimestamp();
 
-        await message.reply({ embeds: [embed] });
+        return message.reply({ embeds: [embed] });
     }
 };
 
 // Eventos del bot
 client.once('ready', async () => {
     console.log(`✅ Bot conectado: ${client.user.tag}`);
+    console.log(`🤖 ID del bot: ${client.user.id}`);
     client.user.setActivity('Inventario GTA RP', { type: ActivityType.Watching });
     
     await cargarInventario();
@@ -461,38 +487,74 @@ client.once('ready', async () => {
 });
 
 client.on('messageCreate', async (message) => {
+    // Verificaciones básicas
     if (message.author.bot || !message.content.startsWith(config.prefix)) return;
-
-    const args = message.content.slice(config.prefix.length).trim().split(/ +/);
-    const comando = args.shift().toLowerCase();
-
-    // Mapeo de comandos con aliases
-    const commandMap = {
-        'help': 'help', 'ayuda': 'help',
-        'add': 'add', 'agregar': 'add',
-        'remove': 'remove', 'quitar': 'remove',
-        'stock': 'stock',
-        'inventory': 'inventory', 'inventario': 'inventory', 'lista': 'inventory',
-        'search': 'search', 'buscar': 'search',
-        'categories': 'categories', 'categorias': 'categories',
-        'category': 'category', 'categoria': 'category',
-        'import': 'import', 'importar': 'import',
-        'create': 'create', 'crear': 'create',
-        'save': 'save', 'guardar': 'save'
-    };
-
-    const commandName = commandMap[comando];
     
-    if (commandName && commands[commandName]) {
-        try {
-            await commands[commandName](message, args);
-        } catch (error) {
-            console.error('Error en comando:', error);
-            await message.reply('❌ Error al procesar comando');
-        }
-    } else {
-        await message.reply('❌ Comando no válido. Usa `!help` para ver comandos');
+    // Evitar procesar el mismo mensaje múltiples veces
+    const messageId = `${message.id}-${message.author.id}`;
+    if (processedMessages.has(messageId)) {
+        console.log(`⚠️ Mensaje ya procesado: ${messageId}`);
+        return;
     }
+    
+    // Evitar procesamiento concurrente
+    if (isProcessing) {
+        console.log('⚠️ Bot ocupado procesando otro comando');
+        return;
+    }
+
+    // Marcar mensaje como procesado
+    processedMessages.add(messageId);
+    
+    // Limpiar cache cada 100 mensajes
+    if (processedMessages.size > 100) {
+        processedMessages.clear();
+    }
+    
+    isProcessing = true;
+
+    try {
+        const args = message.content.slice(config.prefix.length).trim().split(/ +/);
+        const comando = args.shift().toLowerCase();
+
+        // Mapeo de comandos con aliases
+        const commandMap = {
+            'help': 'help', 'ayuda': 'help',
+            'add': 'add', 'agregar': 'add',
+            'remove': 'remove', 'quitar': 'remove',
+            'stock': 'stock',
+            'inventory': 'inventory', 'inventario': 'inventory', 'lista': 'inventory',
+            'search': 'search', 'buscar': 'search',
+            'categories': 'categories', 'categorias': 'categories',
+            'category': 'category', 'categoria': 'category',
+            'import': 'import', 'importar': 'import',
+            'create': 'create', 'crear': 'create',
+            'save': 'save', 'guardar': 'save'
+        };
+
+        const commandName = commandMap[comando];
+        
+        if (commandName && commands[commandName]) {
+            console.log(`🔧 Ejecutando comando: ${commandName} por ${message.author.tag}`);
+            await commands[commandName](message, args);
+        } else {
+            await message.reply('❌ Comando no válido. Usa `!help` para ver comandos');
+        }
+    } catch (error) {
+        console.error('❌ Error en comando:', error);
+        await message.reply('❌ Error al procesar comando');
+    } finally {
+        isProcessing = false;
+    }
+});
+
+// Manejo de errores
+client.on('error', error => {
+    console.error('❌ Error del cliente Discord:', error);
+});
+
+process.on('unhandledRejection', error => {
+    console.error('❌ Error no manejado:', error);
 });
 
 // Validación y inicio
