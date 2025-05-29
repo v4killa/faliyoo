@@ -21,11 +21,11 @@ const client = new Client({
 // Inventario en memoria
 let inventario = {};
 
-// Variable para evitar procesamiento múltiple
+// Sistema mejorado para evitar procesamiento múltiple
 let isProcessing = false;
-
-// Cache para evitar procesar el mismo mensaje múltiples veces
-const processedMessages = new Set();
+const processedMessages = new Map(); // Cambio a Map para mejor control
+const CACHE_CLEANUP_INTERVAL = 300000; // 5 minutos
+const MESSAGE_CACHE_LIMIT = 50;
 
 // Productos predefinidos por categorías
 const categorias = {
@@ -59,6 +59,31 @@ async function guardarInventario() {
     }
 }
 
+// Sistema de limpieza de cache mejorado
+function limpiarCache() {
+    const ahora = Date.now();
+    const tiempoLimite = 60000; // 1 minuto
+    
+    for (const [key, timestamp] of processedMessages.entries()) {
+        if (ahora - timestamp > tiempoLimite) {
+            processedMessages.delete(key);
+        }
+    }
+    
+    // Si aún hay muchos mensajes, eliminar los más antiguos
+    if (processedMessages.size > MESSAGE_CACHE_LIMIT) {
+        const entries = Array.from(processedMessages.entries());
+        entries.sort((a, b) => a[1] - b[1]); // Ordenar por timestamp
+        
+        for (let i = 0; i < entries.length - MESSAGE_CACHE_LIMIT; i++) {
+            processedMessages.delete(entries[i][0]);
+        }
+    }
+}
+
+// Configurar limpieza automática del cache
+setInterval(limpiarCache, CACHE_CLEANUP_INTERVAL);
+
 // Utilidad mejorada para dividir texto manteniendo límites de Discord
 function crearInventarioEmbed(inventario, pagina = 1, itemsPorPagina = 20) {
     const productos = Object.keys(inventario).sort();
@@ -81,13 +106,11 @@ function crearInventarioEmbed(inventario, pagina = 1, itemsPorPagina = 20) {
     const productosEnPagina = productos.slice(inicio, fin);
     
     let descripcion = '';
-    let totalUnidades = 0;
 
     productosEnPagina.forEach(producto => {
         const stock = inventario[producto];
         const icono = stock === 0 ? '🔴' : stock < 10 ? '🟡' : '🟢';
         descripcion += `${icono} **${producto}**: ${stock}\n`;
-        totalUnidades += stock;
     });
 
     const embed = new EmbedBuilder()
@@ -227,7 +250,7 @@ const commands = {
         return message.reply({ embeds: [embed] });
     },
 
-    // Ver inventario completo - CORREGIDO para enviar solo un mensaje
+    // Ver inventario completo
     async inventory(message, args) {
         const productos = Object.keys(inventario);
         
@@ -481,6 +504,8 @@ const commands = {
 client.once('ready', async () => {
     console.log(`✅ Bot conectado: ${client.user.tag}`);
     console.log(`🤖 ID del bot: ${client.user.id}`);
+    console.log(`📅 Fecha de conexión: ${new Date().toLocaleString()}`);
+    
     client.user.setActivity('Inventario GTA RP', { type: ActivityType.Watching });
     
     await cargarInventario();
@@ -492,38 +517,41 @@ client.once('ready', async () => {
         await guardarInventario();
         console.log('✅ Productos básicos inicializados');
     }
+    
+    console.log('🎯 Bot listo para recibir comandos');
 });
 
 client.on('messageCreate', async (message) => {
-    // Verificaciones básicas
-    if (message.author.bot || !message.content.startsWith(config.prefix)) return;
+    // Verificaciones básicas más estrictas
+    if (message.author.bot) return;
+    if (!message.content.startsWith(config.prefix)) return;
+    if (!message.guild) return; // Solo procesar mensajes de servidores
     
-    // Evitar procesar el mismo mensaje múltiples veces
-    const messageId = `${message.id}-${message.author.id}`;
-    if (processedMessages.has(messageId)) {
-        console.log(`⚠️ Mensaje ya procesado: ${messageId}`);
+    // Sistema mejorado para evitar mensajes duplicados
+    const messageKey = `${message.id}-${message.channelId}-${message.author.id}`;
+    const ahora = Date.now();
+    
+    // Verificar si ya se procesó este mensaje
+    if (processedMessages.has(messageKey)) {
+        console.log(`⚠️ Mensaje duplicado ignorado: ${messageKey}`);
         return;
     }
     
-    // Evitar procesamiento concurrente
+    // Verificar si hay otro comando procesándose
     if (isProcessing) {
-        console.log('⚠️ Bot ocupado procesando otro comando');
-        return message.reply('⏳ Bot ocupado, intenta de nuevo en un momento...');
+        console.log('⚠️ Bot ocupado, ignorando comando duplicado');
+        return;
     }
 
-    // Marcar mensaje como procesado
-    processedMessages.add(messageId);
-    
-    // Limpiar cache cada 100 mensajes
-    if (processedMessages.size > 100) {
-        processedMessages.clear();
-    }
-    
+    // Marcar mensaje como procesado inmediatamente
+    processedMessages.set(messageKey, ahora);
     isProcessing = true;
 
     try {
         const args = message.content.slice(config.prefix.length).trim().split(/ +/);
         const comando = args.shift().toLowerCase();
+
+        console.log(`🔧 Procesando comando: ${comando} de ${message.author.tag} en ${message.guild.name}`);
 
         // Mapeo de comandos con aliases
         const commandMap = {
@@ -543,26 +571,70 @@ client.on('messageCreate', async (message) => {
         const commandName = commandMap[comando];
         
         if (commandName && commands[commandName]) {
-            console.log(`🔧 Ejecutando comando: ${commandName} por ${message.author.tag}`);
             await commands[commandName](message, args);
+            console.log(`✅ Comando ${commandName} ejecutado correctamente`);
         } else {
             await message.reply('❌ Comando no válido. Usa `!help` para ver comandos');
         }
     } catch (error) {
         console.error('❌ Error en comando:', error);
-        await message.reply('❌ Error al procesar comando');
+        try {
+            await message.reply('❌ Error interno del bot. Intenta de nuevo.');
+        } catch (replyError) {
+            console.error('❌ Error al enviar mensaje de error:', replyError);
+        }
     } finally {
+        // Importante: siempre liberar el lock
         isProcessing = false;
+        
+        // Pequeño delay para evitar race conditions
+        setTimeout(() => {
+            // Limpiar cache si es necesario
+            if (processedMessages.size > MESSAGE_CACHE_LIMIT) {
+                limpiarCache();
+            }
+        }, 1000);
     }
 });
 
-// Manejo de errores
+// Manejo de errores mejorado
 client.on('error', error => {
     console.error('❌ Error del cliente Discord:', error);
+    isProcessing = false; // Liberar lock en caso de error
 });
 
-process.on('unhandledRejection', error => {
+client.on('warn', warning => {
+    console.warn('⚠️ Advertencia Discord:', warning);
+});
+
+client.on('disconnect', () => {
+    console.log('🔌 Bot desconectado');
+    isProcessing = false;
+});
+
+process.on('unhandledRejection', (error, promise) => {
     console.error('❌ Error no manejado:', error);
+    console.error('❌ Promise:', promise);
+    isProcessing = false; // Liberar lock
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('❌ Excepción no manejada:', error);
+    isProcessing = false; // Liberar lock
+    process.exit(1);
+});
+
+// Manejo de cierre graceful
+process.on('SIGINT', () => {
+    console.log('🛑 Cerrando bot...');
+    client.destroy();
+    process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+    console.log('🛑 Cerrando bot...');
+    client.destroy();
+    process.exit(0);
 });
 
 // Validación y inicio
@@ -572,4 +644,9 @@ if (!config.token) {
 }
 
 console.log('🚀 Iniciando bot con persistencia JSON...');
-client.login(config.token);
+console.log('🔧 Versión mejorada - Sin respuestas múltiples');
+
+client.login(config.token).catch(error => {
+    console.error('❌ Error al conectar bot:', error);
+    process.exit(1);
+});
