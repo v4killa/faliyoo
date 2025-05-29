@@ -90,7 +90,8 @@ const commands = {
                 { name: '!categories', value: 'Ver categorías', inline: true },
                 { name: '!category [nombre]', value: 'Items de categoría', inline: true },
                 { name: '!import [categoría]', value: 'Importar categoría', inline: true },
-                { name: '!create [item1,item2,...]', value: 'Crear múltiples items', inline: true }
+                { name: '!create [item1,item2,...]', value: 'Crear múltiples items', inline: true },
+                { name: '!save', value: 'Guardar inventario manualmente', inline: true }
             )
             .setFooter({ text: 'Inventario con persistencia JSON' })
             .setTimestamp();
@@ -419,6 +420,27 @@ const commands = {
         embed.setFooter({ text: guardado ? 'Guardado en JSON ✅' : 'Error al guardar ❌' });
 
         await message.reply({ embeds: [embed] });
+    },
+
+    // Guardado manual
+    async save(message) {
+        const guardado = await guardarInventario();
+        
+        const embed = new EmbedBuilder()
+            .setColor(guardado ? '#28a745' : '#dc3545')
+            .setTitle(guardado ? '💾 Inventario Guardado' : '❌ Error al Guardar')
+            .setDescription(guardado ? 
+                'El inventario se ha guardado correctamente en el archivo JSON.' : 
+                'Hubo un error al intentar guardar el inventario.'
+            )
+            .addFields({
+                name: 'Total de productos',
+                value: Object.keys(inventario).length.toString(),
+                inline: true
+            })
+            .setTimestamp();
+
+        await message.reply({ embeds: [embed] });
     }
 };
 
@@ -455,7 +477,8 @@ client.on('messageCreate', async (message) => {
         'categories': 'categories', 'categorias': 'categories',
         'category': 'category', 'categoria': 'category',
         'import': 'import', 'importar': 'import',
-        'create': 'create', 'crear': 'create'
+        'create': 'create', 'crear': 'create',
+        'save': 'save', 'guardar': 'save'
     };
 
     const commandName = commandMap[comando];
