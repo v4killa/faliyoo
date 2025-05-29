@@ -21,11 +21,10 @@ const client = new Client({
 // Inventario en memoria
 let inventario = {};
 
-// Sistema mejorado para evitar procesamiento múltiple
-let isProcessing = false;
-const processedMessages = new Map(); // Cambio a Map para mejor control
-const CACHE_CLEANUP_INTERVAL = 300000; // 5 minutos
-const MESSAGE_CACHE_LIMIT = 50;
+// SISTEMA ULTRA AGRESIVO ANTI-DUPLICADOS
+const commandLocks = new Map(); // Lock por usuario+comando
+const globalProcessing = new Set(); // Lock global
+const COMMAND_COOLDOWN = 2000; // 2 segundos entre comandos del mismo usuario
 
 // Productos predefinidos por categorías
 const categorias = {
@@ -51,7 +50,6 @@ async function cargarInventario() {
 async function guardarInventario() {
     try {
         await fs.writeFile(config.inventoryFile, JSON.stringify(inventario, null, 2), 'utf8');
-        console.log('💾 Inventario guardado en JSON');
         return true;
     } catch (error) {
         console.error('❌ Error al guardar:', error);
@@ -59,32 +57,46 @@ async function guardarInventario() {
     }
 }
 
-// Sistema de limpieza de cache mejorado
-function limpiarCache() {
+// FUNCIÓN ANTI-SPAM ULTRA AGRESIVA
+function puedeEjecutarComando(userId, comando) {
     const ahora = Date.now();
-    const tiempoLimite = 60000; // 1 minuto
+    const key = `${userId}-${comando}`;
     
-    for (const [key, timestamp] of processedMessages.entries()) {
-        if (ahora - timestamp > tiempoLimite) {
-            processedMessages.delete(key);
+    // Verificar cooldown específico del usuario+comando
+    if (commandLocks.has(key)) {
+        const ultimoComando = commandLocks.get(key);
+        if (ahora - ultimoComando < COMMAND_COOLDOWN) {
+            console.log(`🚫 COOLDOWN: Usuario ${userId} comando ${comando} - ${COMMAND_COOLDOWN - (ahora - ultimoComando)}ms restantes`);
+            return false;
         }
     }
     
-    // Si aún hay muchos mensajes, eliminar los más antiguos
-    if (processedMessages.size > MESSAGE_CACHE_LIMIT) {
-        const entries = Array.from(processedMessages.entries());
-        entries.sort((a, b) => a[1] - b[1]); // Ordenar por timestamp
-        
-        for (let i = 0; i < entries.length - MESSAGE_CACHE_LIMIT; i++) {
-            processedMessages.delete(entries[i][0]);
-        }
+    // Verificar si ya se está procesando globalmente
+    if (globalProcessing.has(key)) {
+        console.log(`🚫 PROCESANDO: Comando ${key} ya en ejecución`);
+        return false;
     }
+    
+    return true;
 }
 
-// Configurar limpieza automática del cache
-setInterval(limpiarCache, CACHE_CLEANUP_INTERVAL);
+function marcarComandoEnUso(userId, comando) {
+    const key = `${userId}-${comando}`;
+    commandLocks.set(key, Date.now());
+    globalProcessing.add(key);
+    
+    // Auto-limpiar después de 10 segundos (por si algo falla)
+    setTimeout(() => {
+        globalProcessing.delete(key);
+    }, 10000);
+}
 
-// Utilidad mejorada para dividir texto manteniendo límites de Discord
+function liberarComando(userId, comando) {
+    const key = `${userId}-${comando}`;
+    globalProcessing.delete(key);
+}
+
+// Utilidad para crear embeds de inventario
 function crearInventarioEmbed(inventario, pagina = 1, itemsPorPagina = 20) {
     const productos = Object.keys(inventario).sort();
     const totalItems = productos.length;
@@ -106,7 +118,6 @@ function crearInventarioEmbed(inventario, pagina = 1, itemsPorPagina = 20) {
     const productosEnPagina = productos.slice(inicio, fin);
     
     let descripcion = '';
-
     productosEnPagina.forEach(producto => {
         const stock = inventario[producto];
         const icono = stock === 0 ? '🔴' : stock < 10 ? '🟡' : '🟢';
@@ -125,140 +136,19 @@ function crearInventarioEmbed(inventario, pagina = 1, itemsPorPagina = 20) {
         .setTimestamp();
 
     if (totalPaginas > 1) {
-        embed.setFooter({ text: `Página ${pagina} de ${totalPaginas} • Usa !inventory [página] para navegar` });
+        embed.setFooter({ text: `Página ${pagina} de ${totalPaginas}` });
     }
 
     return { embed, totalPaginas };
 }
 
-// Comandos del bot
+// COMANDOS - SOLO LOS PRINCIPALES
 const commands = {
-    // Ayuda
-    async help(message) {
-        const embed = new EmbedBuilder()
-            .setColor('#0099ff')
-            .setTitle('🎮 Bot de Inventario GTA RP')
-            .setDescription('**Comandos principales:**')
-            .addFields(
-                { name: '!add [item] [cantidad]', value: 'Agregar items', inline: true },
-                { name: '!remove [item] [cantidad]', value: 'Quitar items', inline: true },
-                { name: '!stock [item]', value: 'Ver stock específico', inline: true },
-                { name: '!inventory [página]', value: 'Ver inventario completo', inline: true },
-                { name: '!search [término]', value: 'Buscar items', inline: true },
-                { name: '!categories', value: 'Ver categorías', inline: true },
-                { name: '!category [nombre]', value: 'Items de categoría', inline: true },
-                { name: '!import [categoría]', value: 'Importar categoría', inline: true },
-                { name: '!create [item1,item2,...]', value: 'Crear múltiples items', inline: true },
-                { name: '!save', value: 'Guardar inventario manualmente', inline: true }
-            )
-            .setFooter({ text: 'Inventario con persistencia JSON' })
-            .setTimestamp();
-
-        return message.reply({ embeds: [embed] });
-    },
-
-    // Agregar producto
-    async add(message, args) {
-        if (args.length < 2) {
-            return message.reply('❌ Uso: `!add [producto] [cantidad]`');
-        }
-
-        const cantidad = parseInt(args[args.length - 1]);
-        if (isNaN(cantidad) || cantidad <= 0) {
-            return message.reply('❌ Cantidad debe ser un número positivo');
-        }
-
-        const producto = args.slice(0, -1).join(' ').toLowerCase();
-        const stockAnterior = inventario[producto] || 0;
-        inventario[producto] = stockAnterior + cantidad;
-
-        const guardado = await guardarInventario();
-        
-        const embed = new EmbedBuilder()
-            .setColor('#28a745')
-            .setTitle('✅ Producto Agregado')
-            .addFields(
-                { name: 'Item', value: producto, inline: true },
-                { name: 'Agregado', value: cantidad.toString(), inline: true },
-                { name: 'Total', value: inventario[producto].toString(), inline: true }
-            )
-            .setFooter({ text: guardado ? 'Guardado en JSON ✅' : 'Error al guardar ❌' })
-            .setTimestamp();
-
-        return message.reply({ embeds: [embed] });
-    },
-
-    // Quitar producto
-    async remove(message, args) {
-        if (args.length < 2) {
-            return message.reply('❌ Uso: `!remove [producto] [cantidad]`');
-        }
-
-        const cantidad = parseInt(args[args.length - 1]);
-        if (isNaN(cantidad) || cantidad <= 0) {
-            return message.reply('❌ Cantidad debe ser un número positivo');
-        }
-
-        const producto = args.slice(0, -1).join(' ').toLowerCase();
-        
-        if (!inventario[producto]) {
-            return message.reply(`❌ "${producto}" no existe en inventario`);
-        }
-
-        if (inventario[producto] < cantidad) {
-            return message.reply(`❌ Stock insuficiente. Actual: ${inventario[producto]}`);
-        }
-
-        inventario[producto] -= cantidad;
-        const guardado = await guardarInventario();
-
-        const embed = new EmbedBuilder()
-            .setColor('#dc3545')
-            .setTitle('📤 Producto Retirado')
-            .addFields(
-                { name: 'Item', value: producto, inline: true },
-                { name: 'Retirado', value: cantidad.toString(), inline: true },
-                { name: 'Restante', value: inventario[producto].toString(), inline: true }
-            )
-            .setFooter({ text: guardado ? 'Guardado en JSON ✅' : 'Error al guardar ❌' })
-            .setTimestamp();
-
-        return message.reply({ embeds: [embed] });
-    },
-
-    // Ver stock específico
-    async stock(message, args) {
-        if (args.length === 0) {
-            return message.reply('❌ Uso: `!stock [producto]`');
-        }
-
-        const producto = args.join(' ').toLowerCase();
-        const stock = inventario[producto] || 0;
-        const color = stock === 0 ? '#dc3545' : stock < 10 ? '#ffc107' : '#28a745';
-        const estado = stock === 0 ? '🔴 Agotado' : stock < 10 ? '🟡 Bajo' : '🟢 Normal';
-
-        const embed = new EmbedBuilder()
-            .setColor(color)
-            .setTitle('📊 Stock del Producto')
-            .addFields(
-                { name: 'Producto', value: producto, inline: true },
-                { name: 'Stock', value: stock.toString(), inline: true },
-                { name: 'Estado', value: estado, inline: true }
-            )
-            .setTimestamp();
-
-        return message.reply({ embeds: [embed] });
-    },
-
-    // Ver inventario completo
     async inventory(message, args) {
-        const productos = Object.keys(inventario);
-        
-        if (productos.length === 0) {
-            return message.reply('📦 Inventario vacío');
+        if (Object.keys(inventario).length === 0) {
+            return await message.reply('📦 Inventario vacío');
         }
 
-        // Determinar página solicitada
         let pagina = 1;
         if (args.length > 0) {
             const paginaSolicitada = parseInt(args[0]);
@@ -269,384 +159,194 @@ const commands = {
 
         const { embed, totalPaginas } = crearInventarioEmbed(inventario, pagina);
         
-        // Verificar si la página solicitada existe
         if (pagina > totalPaginas) {
-            return message.reply(`❌ Página ${pagina} no existe. Total de páginas: ${totalPaginas}`);
+            return await message.reply(`❌ Página ${pagina} no existe. Total: ${totalPaginas}`);
         }
 
-        return message.reply({ embeds: [embed] });
+        return await message.reply({ embeds: [embed] });
     },
 
-    // Buscar productos
-    async search(message, args) {
-        if (args.length === 0) {
-            return message.reply('❌ Uso: `!search [término]`');
+    async add(message, args) {
+        if (args.length < 2) {
+            return await message.reply('❌ Uso: `!add [producto] [cantidad]`');
         }
 
-        const termino = args.join(' ').toLowerCase();
-        const encontrados = Object.keys(inventario)
-            .filter(producto => producto.includes(termino));
-
-        if (encontrados.length === 0) {
-            return message.reply(`❌ No se encontraron productos con "${termino}"`);
+        const cantidad = parseInt(args[args.length - 1]);
+        if (isNaN(cantidad) || cantidad <= 0) {
+            return await message.reply('❌ Cantidad debe ser un número positivo');
         }
 
-        // Limitar resultados para evitar mensajes muy largos
-        const maxResultados = 20;
-        const productosLimitados = encontrados.slice(0, maxResultados);
-        
-        let descripcion = productosLimitados
-            .map(producto => `**${producto}**: ${inventario[producto]}`)
-            .join('\n');
-
-        if (encontrados.length > maxResultados) {
-            descripcion += `\n\n*... y ${encontrados.length - maxResultados} resultados más*`;
-        }
-
-        const embed = new EmbedBuilder()
-            .setColor('#ffc107')
-            .setTitle(`🔍 Resultados de Búsqueda (${encontrados.length})`)
-            .setDescription(descripcion)
-            .setTimestamp();
-
-        return message.reply({ embeds: [embed] });
-    },
-
-    // Mostrar categorías
-    async categories(message) {
-        const embed = new EmbedBuilder()
-            .setColor('#8b0000')
-            .setTitle('🗂️ Categorías Disponibles')
-            .setTimestamp();
-
-        Object.keys(categorias).forEach(categoria => {
-            const productos = categorias[categoria];
-            const muestra = productos.slice(0, 3).join(', ');
-            const extras = productos.length > 3 ? ` y ${productos.length - 3} más...` : '';
-            
-            const emoji = {
-                'armas': '🔫',
-                'cargadores': '📦',
-                'drogas': '💊',
-                'planos': '🗺️'
-            }[categoria] || '📋';
-            
-            embed.addFields({
-                name: `${emoji} ${categoria.charAt(0).toUpperCase() + categoria.slice(1)}`,
-                value: `${muestra}${extras}`,
-                inline: true
-            });
-        });
-
-        return message.reply({ embeds: [embed] });
-    },
-
-    // Ver productos de una categoría
-    async category(message, args) {
-        if (args.length === 0) {
-            return message.reply('❌ Uso: `!category [nombre]`');
-        }
-
-        const categoria = args.join(' ').toLowerCase();
-        
-        if (!categorias[categoria]) {
-            return message.reply(`❌ Categoría "${categoria}" no existe`);
-        }
-
-        const productos = categorias[categoria];
-        let descripcion = '';
-        
-        productos.forEach(producto => {
-            const enInventario = inventario.hasOwnProperty(producto);
-            const stock = enInventario ? inventario[producto] : 0;
-            const icono = enInventario ? (stock > 0 ? '✅' : '⚪') : '➕';
-            
-            descripcion += `${icono} **${producto}**`;
-            if (enInventario) descripcion += ` (${stock})`;
-            descripcion += '\n';
-        });
-
-        const embed = new EmbedBuilder()
-            .setColor('#ff6347')
-            .setTitle(`🏷️ Categoría: ${categoria.charAt(0).toUpperCase() + categoria.slice(1)}`)
-            .setDescription(descripcion)
-            .addFields({
-                name: 'Leyenda',
-                value: '✅ En inventario con stock\n⚪ En inventario sin stock\n➕ No añadido',
-                inline: false
-            })
-            .setTimestamp();
-
-        return message.reply({ embeds: [embed] });
-    },
-
-    // Importar categoría completa
-    async import(message, args) {
-        if (args.length === 0) {
-            return message.reply('❌ Uso: `!import [categoría]`');
-        }
-
-        const categoria = args.join(' ').toLowerCase();
-        
-        if (!categorias[categoria]) {
-            return message.reply(`❌ Categoría "${categoria}" no existe`);
-        }
-
-        const productos = categorias[categoria];
-        let nuevos = [];
-        let existentes = [];
-
-        productos.forEach(producto => {
-            if (!inventario.hasOwnProperty(producto)) {
-                inventario[producto] = 0;
-                nuevos.push(producto);
-            } else {
-                existentes.push(producto);
-            }
-        });
-
-        const guardado = await guardarInventario();
-
-        const embed = new EmbedBuilder()
-            .setColor('#ff8c00')
-            .setTitle(`📥 Importar: ${categoria.charAt(0).toUpperCase() + categoria.slice(1)}`)
-            .setTimestamp();
-
-        let descripcion = `**Total:** ${productos.length} productos\n\n`;
-        
-        if (nuevos.length > 0) {
-            descripcion += `✅ **Importados (${nuevos.length}):**\n${nuevos.join(', ')}\n\n`;
-        }
-
-        if (existentes.length > 0) {
-            descripcion += `⚠️ **Ya existían (${existentes.length}):**\n${existentes.join(', ')}`;
-        }
-
-        embed.setDescription(descripcion);
-        embed.setFooter({ text: guardado ? 'Guardado en JSON ✅' : 'Error al guardar ❌' });
-
-        return message.reply({ embeds: [embed] });
-    },
-
-    // Crear múltiples productos
-    async create(message, args) {
-        if (args.length === 0) {
-            return message.reply('❌ Uso: `!create [item1,item2,item3]`');
-        }
-
-        const productosTexto = args.join(' ');
-        const productos = productosTexto.split(',')
-            .map(p => p.trim().toLowerCase())
-            .filter(p => p.length > 0);
-
-        if (productos.length === 0) {
-            return message.reply('❌ No se encontraron productos válidos');
-        }
-
-        let nuevos = [];
-        let existentes = [];
-
-        productos.forEach(producto => {
-            if (!inventario.hasOwnProperty(producto)) {
-                inventario[producto] = 0;
-                nuevos.push(producto);
-            } else {
-                existentes.push(producto);
-            }
-        });
-
-        const guardado = await guardarInventario();
-
-        const embed = new EmbedBuilder()
-            .setColor('#4169e1')
-            .setTitle('📦 Creación en Lote')
-            .setTimestamp();
-
-        let descripcion = '';
-        
-        if (nuevos.length > 0) {
-            descripcion += `✅ **Creados (${nuevos.length}):**\n${nuevos.join(', ')}\n\n`;
-        }
-
-        if (existentes.length > 0) {
-            descripcion += `⚠️ **Ya existían (${existentes.length}):**\n${existentes.join(', ')}`;
-        }
-
-        embed.setDescription(descripcion);
-        embed.setFooter({ text: guardado ? 'Guardado en JSON ✅' : 'Error al guardar ❌' });
-
-        return message.reply({ embeds: [embed] });
-    },
-
-    // Guardado manual
-    async save(message) {
-        const guardado = await guardarInventario();
+        const producto = args.slice(0, -1).join(' ').toLowerCase();
+        inventario[producto] = (inventario[producto] || 0) + cantidad;
+        await guardarInventario();
         
         const embed = new EmbedBuilder()
-            .setColor(guardado ? '#28a745' : '#dc3545')
-            .setTitle(guardado ? '💾 Inventario Guardado' : '❌ Error al Guardar')
-            .setDescription(guardado ? 
-                'El inventario se ha guardado correctamente en el archivo JSON.' : 
-                'Hubo un error al intentar guardar el inventario.'
+            .setColor('#28a745')
+            .setTitle('✅ Producto Agregado')
+            .addFields(
+                { name: 'Item', value: producto, inline: true },
+                { name: 'Agregado', value: cantidad.toString(), inline: true },
+                { name: 'Total', value: inventario[producto].toString(), inline: true }
             )
-            .addFields({
-                name: 'Total de productos',
-                value: Object.keys(inventario).length.toString(),
-                inline: true
-            })
             .setTimestamp();
 
-        return message.reply({ embeds: [embed] });
+        return await message.reply({ embeds: [embed] });
+    },
+
+    async remove(message, args) {
+        if (args.length < 2) {
+            return await message.reply('❌ Uso: `!remove [producto] [cantidad]`');
+        }
+
+        const cantidad = parseInt(args[args.length - 1]);
+        if (isNaN(cantidad) || cantidad <= 0) {
+            return await message.reply('❌ Cantidad debe ser un número positivo');
+        }
+
+        const producto = args.slice(0, -1).join(' ').toLowerCase();
+        
+        if (!inventario[producto] || inventario[producto] < cantidad) {
+            return await message.reply(`❌ Stock insuficiente. Actual: ${inventario[producto] || 0}`);
+        }
+
+        inventario[producto] -= cantidad;
+        await guardarInventario();
+
+        const embed = new EmbedBuilder()
+            .setColor('#dc3545')
+            .setTitle('📤 Producto Retirado')
+            .addFields(
+                { name: 'Item', value: producto, inline: true },
+                { name: 'Retirado', value: cantidad.toString(), inline: true },
+                { name: 'Restante', value: inventario[producto].toString(), inline: true }
+            )
+            .setTimestamp();
+
+        return await message.reply({ embeds: [embed] });
+    },
+
+    async stock(message, args) {
+        if (args.length === 0) {
+            return await message.reply('❌ Uso: `!stock [producto]`');
+        }
+
+        const producto = args.join(' ').toLowerCase();
+        const stock = inventario[producto] || 0;
+        const color = stock === 0 ? '#dc3545' : stock < 10 ? '#ffc107' : '#28a745';
+
+        const embed = new EmbedBuilder()
+            .setColor(color)
+            .setTitle('📊 Stock del Producto')
+            .addFields(
+                { name: 'Producto', value: producto, inline: true },
+                { name: 'Stock', value: stock.toString(), inline: true }
+            )
+            .setTimestamp();
+
+        return await message.reply({ embeds: [embed] });
+    },
+
+    async help(message) {
+        const embed = new EmbedBuilder()
+            .setColor('#0099ff')
+            .setTitle('🎮 Bot de Inventario GTA RP')
+            .addFields(
+                { name: '!add [item] [cantidad]', value: 'Agregar items', inline: true },
+                { name: '!remove [item] [cantidad]', value: 'Quitar items', inline: true },
+                { name: '!stock [item]', value: 'Ver stock específico', inline: true },
+                { name: '!inventory [página]', value: 'Ver inventario', inline: true }
+            )
+            .setTimestamp();
+
+        return await message.reply({ embeds: [embed] });
     }
 };
 
 // Eventos del bot
 client.once('ready', async () => {
     console.log(`✅ Bot conectado: ${client.user.tag}`);
-    console.log(`🤖 ID del bot: ${client.user.id}`);
-    console.log(`📅 Fecha de conexión: ${new Date().toLocaleString()}`);
+    console.log(`🆔 Bot ID: ${client.user.id}`);
+    console.log(`⏰ Hora: ${new Date().toLocaleString()}`);
     
     client.user.setActivity('Inventario GTA RP', { type: ActivityType.Watching });
-    
     await cargarInventario();
     
-    // Inicializar productos básicos si está vacío
+    // Productos básicos si está vacío
     if (Object.keys(inventario).length === 0) {
-        const basicos = ['glock', 'beretta', 'cargador pistolas', 'bongs', 'supermercado'];
-        basicos.forEach(producto => inventario[producto] = 0);
+        ['glock', 'beretta', 'cargador pistolas', 'bongs', 'supermercado'].forEach(p => inventario[p] = 0);
         await guardarInventario();
-        console.log('✅ Productos básicos inicializados');
     }
     
-    console.log('🎯 Bot listo para recibir comandos');
+    console.log('🎯 LISTO - Sistema anti-spam activado');
 });
 
+// EVENTO PRINCIPAL - ULTRA SIMPLIFICADO
 client.on('messageCreate', async (message) => {
-    // Verificaciones básicas más estrictas
+    // Filtros básicos
     if (message.author.bot) return;
     if (!message.content.startsWith(config.prefix)) return;
-    if (!message.guild) return; // Solo procesar mensajes de servidores
+    if (!message.guild) return;
     
-    // Sistema mejorado para evitar mensajes duplicados
-    const messageKey = `${message.id}-${message.channelId}-${message.author.id}`;
-    const ahora = Date.now();
+    const args = message.content.slice(config.prefix.length).trim().split(/ +/);
+    const comando = args.shift().toLowerCase();
     
-    // Verificar si ya se procesó este mensaje
-    if (processedMessages.has(messageKey)) {
-        console.log(`⚠️ Mensaje duplicado ignorado: ${messageKey}`);
-        return;
+    // Mapeo de comandos
+    const commandMap = {
+        'inventory': 'inventory', 'inventario': 'inventory', 'lista': 'inventory',
+        'add': 'add', 'agregar': 'add',
+        'remove': 'remove', 'quitar': 'remove',
+        'stock': 'stock',
+        'help': 'help', 'ayuda': 'help'
+    };
+    
+    const commandName = commandMap[comando];
+    if (!commandName || !commands[commandName]) {
+        return; // Ignorar comandos no válidos silenciosamente
     }
     
-    // Verificar si hay otro comando procesándose
-    if (isProcessing) {
-        console.log('⚠️ Bot ocupado, ignorando comando duplicado');
-        return;
+    const userId = message.author.id;
+    
+    // VERIFICACIÓN ANTI-SPAM
+    if (!puedeEjecutarComando(userId, commandName)) {
+        return; // Ignorar silenciosamente si está en cooldown
     }
-
-    // Marcar mensaje como procesado inmediatamente
-    processedMessages.set(messageKey, ahora);
-    isProcessing = true;
-
+    
+    // Marcar como en uso
+    marcarComandoEnUso(userId, commandName);
+    
+    console.log(`🔥 EJECUTANDO: ${commandName} - Usuario: ${message.author.tag} - Canal: ${message.channel.name}`);
+    
     try {
-        const args = message.content.slice(config.prefix.length).trim().split(/ +/);
-        const comando = args.shift().toLowerCase();
-
-        console.log(`🔧 Procesando comando: ${comando} de ${message.author.tag} en ${message.guild.name}`);
-
-        // Mapeo de comandos con aliases
-        const commandMap = {
-            'help': 'help', 'ayuda': 'help',
-            'add': 'add', 'agregar': 'add',
-            'remove': 'remove', 'quitar': 'remove',
-            'stock': 'stock',
-            'inventory': 'inventory', 'inventario': 'inventory', 'lista': 'inventory',
-            'search': 'search', 'buscar': 'search',
-            'categories': 'categories', 'categorias': 'categories',
-            'category': 'category', 'categoria': 'category',
-            'import': 'import', 'importar': 'import',
-            'create': 'create', 'crear': 'create',
-            'save': 'save', 'guardar': 'save'
-        };
-
-        const commandName = commandMap[comando];
-        
-        if (commandName && commands[commandName]) {
-            await commands[commandName](message, args);
-            console.log(`✅ Comando ${commandName} ejecutado correctamente`);
-        } else {
-            await message.reply('❌ Comando no válido. Usa `!help` para ver comandos');
-        }
+        await commands[commandName](message, args);
+        console.log(`✅ COMPLETADO: ${commandName}`);
     } catch (error) {
-        console.error('❌ Error en comando:', error);
+        console.error(`❌ ERROR en ${commandName}:`, error);
         try {
-            await message.reply('❌ Error interno del bot. Intenta de nuevo.');
-        } catch (replyError) {
-            console.error('❌ Error al enviar mensaje de error:', replyError);
+            await message.reply('❌ Error interno del bot');
+        } catch (e) {
+            console.error('❌ Error al enviar mensaje de error:', e);
         }
     } finally {
-        // Importante: siempre liberar el lock
-        isProcessing = false;
-        
-        // Pequeño delay para evitar race conditions
-        setTimeout(() => {
-            // Limpiar cache si es necesario
-            if (processedMessages.size > MESSAGE_CACHE_LIMIT) {
-                limpiarCache();
-            }
-        }, 1000);
+        // SIEMPRE liberar el comando
+        liberarComando(userId, commandName);
     }
 });
 
-// Manejo de errores mejorado
+// Manejo de errores
 client.on('error', error => {
-    console.error('❌ Error del cliente Discord:', error);
-    isProcessing = false; // Liberar lock en caso de error
-});
-
-client.on('warn', warning => {
-    console.warn('⚠️ Advertencia Discord:', warning);
-});
-
-client.on('disconnect', () => {
-    console.log('🔌 Bot desconectado');
-    isProcessing = false;
-});
-
-process.on('unhandledRejection', (error, promise) => {
-    console.error('❌ Error no manejado:', error);
-    console.error('❌ Promise:', promise);
-    isProcessing = false; // Liberar lock
-});
-
-process.on('uncaughtException', (error) => {
-    console.error('❌ Excepción no manejada:', error);
-    isProcessing = false; // Liberar lock
-    process.exit(1);
-});
-
-// Manejo de cierre graceful
-process.on('SIGINT', () => {
-    console.log('🛑 Cerrando bot...');
-    client.destroy();
-    process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-    console.log('🛑 Cerrando bot...');
-    client.destroy();
-    process.exit(0);
+    console.error('❌ Error cliente Discord:', error);
 });
 
 // Validación y inicio
 if (!config.token) {
-    console.error('❌ Falta DISCORD_TOKEN en variables de entorno');
+    console.error('❌ FALTA DISCORD_TOKEN');
     process.exit(1);
 }
 
-console.log('🚀 Iniciando bot con persistencia JSON...');
-console.log('🔧 Versión mejorada - Sin respuestas múltiples');
+console.log('🚀 INICIANDO BOT - VERSIÓN ANTI-SPAM EXTREMA');
+console.log('⚠️  COOLDOWN ENTRE COMANDOS: 2 segundos');
 
 client.login(config.token).catch(error => {
-    console.error('❌ Error al conectar bot:', error);
+    console.error('❌ Error al conectar:', error);
     process.exit(1);
 });
