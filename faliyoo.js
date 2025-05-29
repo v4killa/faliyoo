@@ -20,6 +20,9 @@ const client = new Client({
 // Base de datos del inventario
 let inventario = {};
 
+// 🔧 PREVENIR RESPUESTAS DUPLICADAS: Set para rastrear mensajes procesados
+const mensajesProcesados = new Set();
+
 // Lista simplificada de productos con categorías para GTA Roleplay
 const productosPredefindos = {
     'armas': ['vintage', 'glock', 'beretta', 'ak47', 'uzi'],
@@ -123,7 +126,8 @@ async function mostrarCategorias(message) {
         inline: false
     });
 
-    await message.reply({ embeds: [embed] });
+    // 🔧 FIX: Solo una respuesta usando reply
+    return message.reply({ embeds: [embed] });
 }
 
 async function mostrarProductosCategoria(message, args) {
@@ -152,6 +156,7 @@ async function mostrarProductosCategoria(message, args) {
 
     const partes = dividirEmbed(descripcion);
     
+    // 🔧 FIX: Enviar embeds secuencialmente para evitar duplicados
     for (let i = 0; i < partes.length; i++) {
         const embed = new EmbedBuilder()
             .setColor('#ff6347')
@@ -169,7 +174,12 @@ async function mostrarProductosCategoria(message, args) {
             });
         }
 
-        await message.reply({ embeds: [embed] });
+        // 🔧 FIX: Usar reply solo en la primera iteración, send en las siguientes
+        if (i === 0) {
+            await message.reply({ embeds: [embed] });
+        } else {
+            await message.channel.send({ embeds: [embed] });
+        }
     }
 }
 
@@ -211,7 +221,7 @@ async function sugerirProductos(message, args) {
 
     embed.addFields({ name: 'Sugerencias', value: descripcion, inline: false });
 
-    await message.reply({ embeds: [embed] });
+    return message.reply({ embeds: [embed] });
 }
 
 async function crearProductosLote(message, args) {
@@ -261,7 +271,7 @@ async function crearProductosLote(message, args) {
 
     embed.setDescription(descripcion);
 
-    await message.reply({ embeds: [embed] });
+    return message.reply({ embeds: [embed] });
 }
 
 async function importarProductos(message, args) {
@@ -315,7 +325,7 @@ async function importarProductos(message, args) {
 
     embed.setDescription(descripcion);
 
-    await message.reply({ embeds: [embed] });
+    return message.reply({ embeds: [embed] });
 }
 
 async function mostrarAyuda(message) {
@@ -336,10 +346,10 @@ async function mostrarAyuda(message) {
             { name: '**!importar [categoría]**', value: 'Importa todos los items de una categoría\nEjemplo: `!importar planos`', inline: false },
             { name: '**!limpiar**', value: 'Limpia todo el inventario (requiere confirmación)', inline: false }
         )
-        .setFooter({ text: 'Bot de Inventario GTA RP v3.0 - Versión Segura para Render' })
+        .setFooter({ text: 'Bot de Inventario GTA RP v3.1 - Sin Respuestas Duplicadas' })
         .setTimestamp();
 
-    await message.reply({ embeds: [embed] });
+    return message.reply({ embeds: [embed] });
 }
 
 async function agregarProducto(message, args) {
@@ -373,7 +383,7 @@ async function agregarProducto(message, args) {
         )
         .setTimestamp();
 
-    await message.reply({ embeds: [embed] });
+    return message.reply({ embeds: [embed] });
 }
 
 async function quitarProducto(message, args) {
@@ -415,7 +425,7 @@ async function quitarProducto(message, args) {
         embed.setDescription('⚠️ **Stock agotado**');
     }
 
-    await message.reply({ embeds: [embed] });
+    return message.reply({ embeds: [embed] });
 }
 
 async function mostrarStock(message, args) {
@@ -443,7 +453,7 @@ async function mostrarStock(message, args) {
         )
         .setTimestamp();
 
-    await message.reply({ embeds: [embed] });
+    return message.reply({ embeds: [embed] });
 }
 
 async function mostrarInventarioCompleto(message) {
@@ -467,6 +477,7 @@ async function mostrarInventarioCompleto(message) {
 
     const partes = dividirEmbed(descripcion);
     
+    // 🔧 FIX: Mismo patrón que mostrarProductosCategoria
     for (let i = 0; i < partes.length; i++) {
         const embed = new EmbedBuilder()
             .setColor('#17a2b8')
@@ -481,7 +492,11 @@ async function mostrarInventarioCompleto(message) {
             );
         }
 
-        await message.reply({ embeds: [embed] });
+        if (i === 0) {
+            await message.reply({ embeds: [embed] });
+        } else {
+            await message.channel.send({ embeds: [embed] });
+        }
     }
 }
 
@@ -514,7 +529,7 @@ async function buscarProducto(message, args) {
 
     embed.addFields({ name: 'Productos Encontrados', value: descripcion, inline: false });
 
-    await message.reply({ embeds: [embed] });
+    return message.reply({ embeds: [embed] });
 }
 
 async function limpiarInventario(message) {
@@ -551,14 +566,20 @@ async function limpiarInventario(message) {
                 .setDescription('El inventario ha sido completamente limpiado y guardado.')
                 .setTimestamp();
             
-            await message.reply({ embeds: [confirmEmbed] });
+            return message.channel.send({ embeds: [confirmEmbed] });
         } else {
-            await message.reply('❌ Limpieza de inventario cancelada.');
+            return message.channel.send('❌ Limpieza de inventario cancelada.');
         }
     } catch (error) {
-        await message.reply('⏰ Tiempo agotado. Limpieza de inventario cancelada.');
+        return message.channel.send('⏰ Tiempo agotado. Limpieza de inventario cancelada.');
     }
 }
+
+// 🔧 LIMPIAR CACHE DE MENSAJES PROCESADOS CADA 5 MINUTOS
+setInterval(() => {
+    mensajesProcesados.clear();
+    console.log('🧹 Cache de mensajes procesados limpiado');
+}, 5 * 60 * 1000);
 
 // Prefijo para los comandos
 const PREFIX = '!';
@@ -577,7 +598,13 @@ client.once('ready', async () => {
 });
 
 client.on('messageCreate', async (message) => {
-    if (message.author.bot || !message.content.startsWith(PREFIX)) return;
+    // 🔧 PREVENIR RESPUESTAS DUPLICADAS: Verificar si ya procesamos este mensaje
+    if (message.author.bot || !message.content.startsWith(PREFIX) || mensajesProcesados.has(message.id)) {
+        return;
+    }
+    
+    // 🔧 MARCAR MENSAJE COMO PROCESADO
+    mensajesProcesados.add(message.id);
 
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
     const comando = args.shift().toLowerCase();
@@ -648,7 +675,9 @@ client.on('messageCreate', async (message) => {
         }
     } catch (error) {
         console.error('❌ Error al procesar comando:', error);
-        await message.reply('❌ Ocurrió un error al procesar el comando. Revisa la consola para más detalles.');
+        // 🔧 REMOVER DEL CACHE SI HAY ERROR PARA PERMITIR REINTENTO
+        mensajesProcesados.delete(message.id);
+        await message.reply('❌ Ocurrió un error al procesar el comando. Intenta nuevamente.');
     }
 });
 
