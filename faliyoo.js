@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActivityType } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActivityType, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } = require('discord.js');
 const fs = require('fs').promises;
 const path = require('path');
 
@@ -26,12 +26,39 @@ const client = new Client({
 
 let inventario = {};
 
+// Productos con sus emoticonos
 const productos = {
-    'armas': ['vintage', 'glock', 'beretta', 'ak47', 'uzi'],
-    'cargadores': ['cargador pistolas', 'cargador subfusil'],
-    'drogas': ['bongs', 'pcp', 'galletas', 'fentanilo', 'cocaina', 'marihuana'],
-    'planos': ['supermercado', 'gasolinera', 'joyeria', 'barberia', 'licoreria', 'banco']
+    'armas': {
+        '🔫': 'glock',
+        '🏹': 'vintage', 
+        '💣': 'beretta',
+        '⚔️': 'ak47',
+        '🔪': 'uzi'
+    },
+    'cargadores': {
+        '📦': 'cargador pistolas',
+        '🗃️': 'cargador subfusil'
+    },
+    'drogas': {
+        '🚬': 'bongs',
+        '💊': 'pcp',
+        '🍪': 'galletas',
+        '⚗️': 'fentanilo',
+        '❄️': 'cocaina',
+        '🌿': 'marihuana'
+    },
+    'planos': {
+        '🏪': 'supermercado',
+        '⛽': 'gasolinera',
+        '💎': 'joyeria',
+        '💇': 'barberia',
+        '🍺': 'licoreria',
+        '🏦': 'banco'
+    }
 };
+
+// Emoticonos de números
+const numeroEmojis = ['0️⃣', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣'];
 
 // Sistema de reconexión automática
 async function reconnect() {
@@ -87,7 +114,7 @@ client.on('shardError', (error) => {
     if (!isShuttingDown) reconnect();
 });
 
-// Funciones del inventario optimizadas
+// Funciones del inventario
 async function cargarInventario() {
     try {
         const data = await fs.readFile(INVENTARIO_FILE, 'utf8');
@@ -109,7 +136,8 @@ async function guardarInventario() {
 
 async function inicializarProductos() {
     if (Object.keys(inventario).length === 0) {
-        ['glock', 'beretta', 'cargador pistolas', 'bongs', 'supermercado'].forEach(item => {
+        const todosProductos = Object.values(productos).flatMap(categoria => Object.values(categoria));
+        todosProductos.forEach(item => {
             inventario[item] = 0;
         });
         await guardarInventario();
@@ -120,220 +148,316 @@ function crearEmbed(title, color = '#8b0000') {
     return new EmbedBuilder().setColor(color).setTitle(title).setTimestamp();
 }
 
-// Comandos optimizados
+// Crear botones de categorías
+function crearBotonesCategorias() {
+    const row = new ActionRowBuilder();
+    const categorias = [
+        { emoji: '🔫', label: 'Armas', customId: 'cat_armas' },
+        { emoji: '📦', label: 'Cargadores', customId: 'cat_cargadores' },
+        { emoji: '💊', label: 'Drogas', customId: 'cat_drogas' },
+        { emoji: '🗺️', label: 'Planos', customId: 'cat_planos' }
+    ];
+    
+    categorias.forEach(cat => {
+        row.addComponents(
+            new ButtonBuilder()
+                .setCustomId(cat.customId)
+                .setLabel(cat.label)
+                .setEmoji(cat.emoji)
+                .setStyle(ButtonStyle.Primary)
+        );
+    });
+    
+    return [row];
+}
+
+// Crear botones de productos por categoría
+function crearBotonesProductos(categoria) {
+    const rows = [];
+    const productosCategoria = productos[categoria];
+    const emojis = Object.keys(productosCategoria);
+    
+    for (let i = 0; i < emojis.length; i += 5) {
+        const row = new ActionRowBuilder();
+        const chunk = emojis.slice(i, i + 5);
+        
+        chunk.forEach(emoji => {
+            const producto = productosCategoria[emoji];
+            const stock = inventario[producto] || 0;
+            row.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`prod_${producto}`)
+                    .setEmoji(emoji)
+                    .setLabel(`${stock}`)
+                    .setStyle(stock === 0 ? ButtonStyle.Danger : stock < 10 ? ButtonStyle.Secondary : ButtonStyle.Success)
+            );
+        });
+        
+        rows.push(row);
+    }
+    
+    // Botón de volver
+    const backRow = new ActionRowBuilder()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId('back_categories')
+                .setLabel('← Volver')
+                .setStyle(ButtonStyle.Secondary)
+        );
+    
+    rows.push(backRow);
+    return rows;
+}
+
+// Crear botones de operaciones (+/-)
+function crearBotonesOperaciones(producto) {
+    const rows = [];
+    
+    // Botones +/-
+    const operacionRow = new ActionRowBuilder()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId(`op_${producto}_add`)
+                .setEmoji('➕')
+                .setLabel('Agregar')
+                .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+                .setCustomId(`op_${producto}_remove`)
+                .setEmoji('➖')
+                .setLabel('Quitar')
+                .setStyle(ButtonStyle.Danger)
+        );
+    
+    rows.push(operacionRow);
+    return rows;
+}
+
+// Crear botones de cantidades
+function crearBotonesCantidades(producto, operacion) {
+    const rows = [];
+    
+    // Números 1-5
+    const row1 = new ActionRowBuilder();
+    for (let i = 1; i <= 5; i++) {
+        row1.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`cant_${producto}_${operacion}_${i}`)
+                .setEmoji(numeroEmojis[i])
+                .setLabel(i.toString())
+                .setStyle(ButtonStyle.Primary)
+        );
+    }
+    
+    // Números 6-9
+    const row2 = new ActionRowBuilder();
+    for (let i = 6; i <= 9; i++) {
+        row2.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`cant_${producto}_${operacion}_${i}`)
+                .setEmoji(numeroEmojis[i])
+                .setLabel(i.toString())
+                .setStyle(ButtonStyle.Primary)
+        );
+    }
+    
+    // Cantidades especiales
+    const row3 = new ActionRowBuilder()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId(`cant_${producto}_${operacion}_25`)
+                .setEmoji('🔥')
+                .setLabel('25')
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId(`cant_${producto}_${operacion}_50`)
+                .setEmoji('💥')
+                .setLabel('50')
+                .setStyle(ButtonStyle.Secondary)
+        );
+    
+    // Botón de volver
+    const backRow = new ActionRowBuilder()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId(`back_prod_${producto}`)
+                .setLabel('← Volver')
+                .setStyle(ButtonStyle.Secondary)
+        );
+    
+    rows.push(row1, row2, row3, backRow);
+    return rows;
+}
+
+// Obtener emoji de producto
+function obtenerEmojiProducto(nombreProducto) {
+    for (const categoria of Object.values(productos)) {
+        for (const [emoji, nombre] of Object.entries(categoria)) {
+            if (nombre === nombreProducto) return emoji;
+        }
+    }
+    return '📦';
+}
+
+// Comandos
 const comandos = {
-    async ayuda(message) {
-        const embed = crearEmbed('🔫 Comandos Bot GTA RP')
-            .setDescription('**!agregar [item] [cant]** - Agrega items\n**!quitar [item] [cant]** - Quita items\n**!stock [item]** - Ver stock\n**!inventario** - Ver todo\n**!buscar [término]** - Buscar items\n**!categorias** - Ver categorías\n**!categoria [nombre]** - Items por categoría\n**!crear [item1,item2]** - Crear múltiples\n**!importar [categoría]** - Importar categoría\n**!limpiar** - Limpiar todo');
-        await message.reply({ embeds: [embed] });
-    },
-
-    async agregar(message, args) {
-        if (args.length < 2) return message.reply('❌ Uso: !agregar [item] [cantidad]');
-        
-        const cant = parseInt(args.pop());
-        if (isNaN(cant) || cant <= 0) return message.reply('❌ Cantidad inválida');
-        
-        const item = args.join(' ').toLowerCase();
-        inventario[item] = (inventario[item] || 0) + cant;
-        await guardarInventario();
-        
-        const embed = crearEmbed('✅ Agregado', '#28a745')
-            .addFields(
-                { name: 'Item', value: item, inline: true },
-                { name: 'Agregado', value: cant.toString(), inline: true },
-                { name: 'Total', value: inventario[item].toString(), inline: true }
-            );
-        await message.reply({ embeds: [embed] });
-    },
-
-    async quitar(message, args) {
-        if (args.length < 2) return message.reply('❌ Uso: !quitar [item] [cantidad]');
-        
-        const cant = parseInt(args.pop());
-        if (isNaN(cant) || cant <= 0) return message.reply('❌ Cantidad inválida');
-        
-        const item = args.join(' ').toLowerCase();
-        if (!inventario[item]) return message.reply('❌ Item no existe');
-        if (inventario[item] < cant) return message.reply(`❌ Stock insuficiente: ${inventario[item]}`);
-        
-        inventario[item] -= cant;
-        await guardarInventario();
-        
-        const embed = crearEmbed('📤 Retirado', '#dc3545')
-            .addFields(
-                { name: 'Item', value: item, inline: true },
-                { name: 'Retirado', value: cant.toString(), inline: true },
-                { name: 'Restante', value: inventario[item].toString(), inline: true }
-            );
-        await message.reply({ embeds: [embed] });
-    },
-
-    async stock(message, args) {
-        if (!args.length) return message.reply('❌ Uso: !stock [item]');
-        
-        const item = args.join(' ').toLowerCase();
-        if (!inventario.hasOwnProperty(item)) return message.reply('❌ Item no existe');
-        
-        const stock = inventario[item];
-        const color = stock === 0 ? '#dc3545' : stock < 10 ? '#ffc107' : '#28a745';
-        const estado = stock === 0 ? '🔴 Agotado' : stock < 10 ? '🟡 Bajo' : '🟢 Normal';
-        
-        const embed = crearEmbed('📊 Stock', color)
-            .addFields(
-                { name: 'Item', value: item, inline: true },
-                { name: 'Cantidad', value: stock.toString(), inline: true },
-                { name: 'Estado', value: estado, inline: true }
-            );
-        await message.reply({ embeds: [embed] });
-    },
-
     async inventario(message) {
+        const embed = crearEmbed('🎮 Inventario GTA RP', '#4169e1')
+            .setDescription('Selecciona una categoría para ver los productos:');
+        
+        const components = crearBotonesCategorias();
+        await message.reply({ embeds: [embed], components });
+    },
+
+    async ayuda(message) {
+        const embed = crearEmbed('🔫 Bot Inventario GTA RP')
+            .setDescription('**Comandos disponibles:**\n\n**!inventario** - Abrir interfaz interactiva\n**!stock** - Ver resumen del inventario\n**!ayuda** - Ver esta ayuda\n\n*Usa los botones para navegar y modificar el inventario*');
+        await message.reply({ embeds: [embed] });
+    },
+
+    async stock(message) {
         const items = Object.keys(inventario);
         if (!items.length) return message.reply('📦 Inventario vacío');
         
         let desc = '';
         let totalItems = 0, totalUnidades = 0;
         
-        items.sort().forEach(item => {
-            const stock = inventario[item];
-            const estado = stock === 0 ? '🔴' : stock < 10 ? '🟡' : '🟢';
-            desc += `${estado} **${item}**: ${stock}\n`;
-            totalItems++;
-            totalUnidades += stock;
-        });
+        // Agrupar por categorías
+        for (const [catNombre, catProductos] of Object.entries(productos)) {
+            const emoji = { armas: '🔫', cargadores: '📦', drogas: '💊', planos: '🗺️' }[catNombre];
+            desc += `\n**${emoji} ${catNombre.toUpperCase()}**\n`;
+            
+            for (const producto of Object.values(catProductos)) {
+                if (inventario.hasOwnProperty(producto)) {
+                    const stock = inventario[producto];
+                    const estado = stock === 0 ? '🔴' : stock < 10 ? '🟡' : '🟢';
+                    const emojiProd = obtenerEmojiProducto(producto);
+                    desc += `${estado} ${emojiProd} ${producto}: **${stock}**\n`;
+                    totalItems++;
+                    totalUnidades += stock;
+                }
+            }
+        }
         
-        const embed = crearEmbed('📋 Inventario', '#17a2b8')
+        const embed = crearEmbed('📊 Resumen Inventario', '#17a2b8')
             .setDescription(desc.slice(0, 4000))
             .addFields(
                 { name: 'Total Items', value: totalItems.toString(), inline: true },
                 { name: 'Total Unidades', value: totalUnidades.toString(), inline: true }
             );
         await message.reply({ embeds: [embed] });
-    },
-
-    async buscar(message, args) {
-        if (!args.length) return message.reply('❌ Uso: !buscar [término]');
-        
-        const termino = args.join(' ').toLowerCase();
-        const encontrados = Object.keys(inventario).filter(item => item.includes(termino));
-        
-        if (!encontrados.length) return message.reply(`❌ No encontrado: "${termino}"`);
-        
-        let desc = '';
-        encontrados.forEach(item => {
-            const stock = inventario[item];
-            const estado = stock === 0 ? '🔴' : stock < 10 ? '🟡' : '🟢';
-            desc += `${estado} **${item}**: ${stock}\n`;
-        });
-        
-        const embed = crearEmbed('🔍 Búsqueda', '#6f42c1').setDescription(desc);
-        await message.reply({ embeds: [embed] });
-    },
-
-    async categorias(message) {
-        const embed = crearEmbed('🗂️ Categorías');
-        Object.keys(productos).forEach(cat => {
-            const items = productos[cat];
-            const emoji = { armas: '🔫', cargadores: '📦', drogas: '💊', planos: '🗺️' }[cat];
-            embed.addFields({ 
-                name: `${emoji} ${cat}`, 
-                value: `${items.slice(0, 3).join(', ')}${items.length > 3 ? '...' : ''}`, 
-                inline: true 
-            });
-        });
-        await message.reply({ embeds: [embed] });
-    },
-
-    async categoria(message, args) {
-        if (!args.length) return message.reply('❌ Uso: !categoria [nombre]');
-        
-        const cat = args.join(' ').toLowerCase();
-        if (!productos[cat]) return message.reply('❌ Categoría no existe');
-        
-        let desc = '';
-        productos[cat].forEach(item => {
-            const tiene = inventario.hasOwnProperty(item);
-            const stock = tiene ? inventario[item] : 0;
-            const estado = tiene ? (stock > 0 ? '✅' : '⚪') : '➕';
-            desc += `${estado} ${item}${tiene ? ` (${stock})` : ''}\n`;
-        });
-        
-        const embed = crearEmbed(`🏷️ ${cat}`, '#ff6347').setDescription(desc);
-        await message.reply({ embeds: [embed] });
-    },
-
-    async crear(message, args) {
-        if (!args.length) return message.reply('❌ Uso: !crear [item1,item2,item3]');
-        
-        const items = args.join(' ').split(',').map(i => i.trim().toLowerCase()).filter(i => i);
-        if (!items.length) return message.reply('❌ No hay items válidos');
-        
-        let nuevos = [], existentes = [];
-        items.forEach(item => {
-            if (!inventario.hasOwnProperty(item)) {
-                inventario[item] = 0;
-                nuevos.push(item);
-            } else {
-                existentes.push(item);
-            }
-        });
-        
-        await guardarInventario();
-        
-        let desc = '';
-        if (nuevos.length) desc += `✅ **Creados:** ${nuevos.join(', ')}\n`;
-        if (existentes.length) desc += `⚠️ **Ya existían:** ${existentes.join(', ')}`;
-        
-        const embed = crearEmbed('📦 Creación Lote', '#4169e1').setDescription(desc);
-        await message.reply({ embeds: [embed] });
-    },
-
-    async importar(message, args) {
-        if (!args.length) return message.reply('❌ Uso: !importar [categoría]');
-        
-        const cat = args.join(' ').toLowerCase();
-        if (!productos[cat]) return message.reply('❌ Categoría no existe');
-        
-        let nuevos = [];
-        productos[cat].forEach(item => {
-            if (!inventario.hasOwnProperty(item)) {
-                inventario[item] = 0;
-                nuevos.push(item);
-            }
-        });
-        
-        await guardarInventario();
-        
-        const desc = nuevos.length ? 
-            `✅ **Importados:** ${nuevos.join(', ')}` : 
-            '✅ Todos ya existían';
-        
-        const embed = crearEmbed(`📥 Importar ${cat}`, '#ff8c00').setDescription(desc);
-        await message.reply({ embeds: [embed] });
-    },
-
-    async limpiar(message) {
-        const embed = crearEmbed('⚠️ Confirmar Limpieza', '#dc3545')
-            .setDescription('Escribe `confirmar` para limpiar todo el inventario');
-        await message.reply({ embeds: [embed] });
-        
-        const filter = r => r.author.id === message.author.id && ['confirmar', 'cancelar'].includes(r.content.toLowerCase());
-        
-        try {
-            const collected = await message.channel.awaitMessages({ filter, max: 1, time: 30000 });
-            if (collected.first().content.toLowerCase() === 'confirmar') {
-                inventario = {};
-                await guardarInventario();
-                await message.reply('✅ Inventario limpiado');
-            } else {
-                await message.reply('❌ Cancelado');
-            }
-        } catch {
-            await message.reply('⏰ Tiempo agotado');
-        }
     }
 };
+
+// Manejo de interacciones
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isButton()) return;
+    
+    const customId = interaction.customId;
+    
+    try {
+        // Categorías
+        if (customId.startsWith('cat_')) {
+            const categoria = customId.replace('cat_', '');
+            const embed = crearEmbed(`${categoria.charAt(0).toUpperCase() + categoria.slice(1)} 🎯`, '#ff6347')
+                .setDescription('Selecciona un producto para modificar:');
+            
+            const components = crearBotonesProductos(categoria);
+            await interaction.update({ embeds: [embed], components });
+        }
+        
+        // Volver a categorías
+        else if (customId === 'back_categories') {
+            const embed = crearEmbed('🎮 Inventario GTA RP', '#4169e1')
+                .setDescription('Selecciona una categoría para ver los productos:');
+            
+            const components = crearBotonesCategorias();
+            await interaction.update({ embeds: [embed], components });
+        }
+        
+        // Productos
+        else if (customId.startsWith('prod_')) {
+            const producto = customId.replace('prod_', '');
+            const emoji = obtenerEmojiProducto(producto);
+            const stock = inventario[producto] || 0;
+            
+            const embed = crearEmbed(`${emoji} ${producto}`, '#6f42c1')
+                .setDescription(`**Stock actual:** ${stock}\n\n¿Qué deseas hacer?`);
+            
+            const components = crearBotonesOperaciones(producto);
+            await interaction.update({ embeds: [embed], components });
+        }
+        
+        // Operaciones
+        else if (customId.startsWith('op_')) {
+            const parts = customId.split('_');
+            const producto = parts[1];
+            const operacion = parts[2];
+            const emoji = obtenerEmojiProducto(producto);
+            
+            const accion = operacion === 'add' ? 'agregar' : 'quitar';
+            const embed = crearEmbed(`${operacion === 'add' ? '➕' : '➖'} ${emoji} ${producto}`, operacion === 'add' ? '#28a745' : '#dc3545')
+                .setDescription(`Selecciona la cantidad a ${accion}:`);
+            
+            const components = crearBotonesCantidades(producto, operacion);
+            await interaction.update({ embeds: [embed], components });
+        }
+        
+        // Cantidades
+        else if (customId.startsWith('cant_')) {
+            const parts = customId.split('_');
+            const producto = parts[1];
+            const operacion = parts[2];
+            const cantidad = parseInt(parts[3]);
+            const emoji = obtenerEmojiProducto(producto);
+            
+            let resultado = '';
+            let color = '#28a745';
+            
+            if (operacion === 'add') {
+                inventario[producto] = (inventario[producto] || 0) + cantidad;
+                resultado = `✅ **Agregado** ${cantidad} ${emoji} ${producto}\n**Nuevo stock:** ${inventario[producto]}`;
+            } else {
+                const stockActual = inventario[producto] || 0;
+                if (stockActual < cantidad) {
+                    resultado = `❌ **Error:** Stock insuficiente\n**Stock actual:** ${stockActual}`;
+                    color = '#dc3545';
+                } else {
+                    inventario[producto] -= cantidad;
+                    resultado = `📤 **Retirado** ${cantidad} ${emoji} ${producto}\n**Stock restante:** ${inventario[producto]}`;
+                    color = '#dc3545';
+                    await guardarInventario();
+                }
+            }
+            
+            if (operacion === 'add' || inventario[producto] >= cantidad) {
+                await guardarInventario();
+            }
+            
+            const embed = crearEmbed(`${operacion === 'add' ? '➕' : '➖'} ${emoji} ${producto}`, color)
+                .setDescription(resultado);
+            
+            const components = crearBotonesOperaciones(producto);
+            await interaction.update({ embeds: [embed], components });
+        }
+        
+        // Volver a producto
+        else if (customId.startsWith('back_prod_')) {
+            const producto = customId.replace('back_prod_', '');
+            const emoji = obtenerEmojiProducto(producto);
+            const stock = inventario[producto] || 0;
+            
+            const embed = crearEmbed(`${emoji} ${producto}`, '#6f42c1')
+                .setDescription(`**Stock actual:** ${stock}\n\n¿Qué deseas hacer?`);
+            
+            const components = crearBotonesOperaciones(producto);
+            await interaction.update({ embeds: [embed], components });
+        }
+        
+    } catch (error) {
+        console.error('❌ Error en interacción:', error.message);
+        await interaction.reply({ content: '❌ Error procesando la acción', ephemeral: true });
+    }
+});
 
 // Manejo de mensajes
 client.on('messageCreate', async (message) => {
@@ -343,9 +467,9 @@ client.on('messageCreate', async (message) => {
     const cmd = args.shift().toLowerCase();
     
     const aliases = {
-        'help': 'ayuda', 'add': 'agregar', 'remove': 'quitar',
-        'lista': 'inventario', 'search': 'buscar', 'clear': 'limpiar',
-        'categories': 'categorias', 'category': 'categoria', 'create': 'crear', 'import': 'importar'
+        'help': 'ayuda',
+        'inv': 'inventario',
+        'list': 'inventario'
     };
     
     const comando = aliases[cmd] || cmd;
@@ -384,7 +508,7 @@ if (!DISCORD_TOKEN) {
     process.exit(1);
 }
 
-console.log('🚀 Iniciando bot con auto-reconexión...');
+console.log('🚀 Iniciando bot con interfaz de emoticonos...');
 client.login(DISCORD_TOKEN).catch(error => {
     console.error('❌ Error inicial:', error.message);
     reconnectAttempts++;
