@@ -29,17 +29,17 @@ const client = new Client({
 let inventario = {};
 let sesionesActivas = new Map();
 
-// Productos organizados
+// Productos organizados - CORREGIDO: Emoji problemático
 const productos = {
     'armas': { '🔫': 'glock', '🏹': 'vintage', '💣': 'beretta', '🪓': 'hachas', '🔪': 'machetes' },
     'cargadores': { '📦': 'cargador pistolas', '🗃️': 'cargador subfusil' },
-    'drogas': { '𖠞': 'bongs', '💊': 'pcp', '🍪': 'galletas', '💉': 'fentanilo', '❄️': 'cocaina', '🌿': 'marihuana' },
+    'drogas': { '🚬': 'bongs', '💊': 'pcp', '🍪': 'galletas', '💉': 'fentanilo', '❄️': 'cocaina', '🌿': 'marihuana' },
     'planos': { '🏪': 'supermercado', '⛽': 'gasolinera', '💎': 'joyeria', '💇': 'barberia', '🍺': 'licoreria', '➕': 'farmacia', '🛠️': 'arquitectinicos' }
 };
 
 const categoriaEmojis = { 'armas': '🔫', 'cargadores': '📦', 'drogas': '💊', 'planos': '🗺️' };
 
-// Funciones MongoDB
+// --- FUNCIONES MONGODB (sin cambios) ---
 async function cargarInventario() {
     try {
         const productos = await inventarioCollection.find({}).toArray();
@@ -86,10 +86,11 @@ function crearEmbed(title, color = '#8b0000') {
     return new EmbedBuilder().setColor(color).setTitle(title).setTimestamp();
 }
 
+// CORREGIDO: Mejor comparación de nombres
 function obtenerEmojiProducto(nombreProducto) {
     for (const categoria of Object.values(productos)) {
         for (const [emoji, nombre] of Object.entries(categoria)) {
-            if (nombre === nombreProducto) return emoji;
+            if (nombre.toLowerCase().trim() === nombreProducto.toLowerCase().trim()) return emoji;
         }
     }
     return '📦';
@@ -106,7 +107,20 @@ function crearBotones(botones) {
     return rows;
 }
 
-// Pantallas con botones
+// CORREGIDO: Codificación de nombres para evitar problemas con espacios
+function codificarNombre(nombre) {
+    return Buffer.from(nombre).toString('base64');
+}
+
+function decodificarNombre(nombreCodificado) {
+    try {
+        return Buffer.from(nombreCodificado, 'base64').toString('utf8');
+    } catch {
+        return nombreCodificado.replace(/_/g, ' ');
+    }
+}
+
+// --- PANTALLAS CON BOTONES ---
 async function mostrarHome(interaction, editar = false) {
     const embed = crearEmbed('🎮 Inventario GTA RP', '#4169e1')
         .setDescription(`**Selecciona una categoría para gestionar:**\n\n🔫 **Armas** - Pistolas y armamento\n📦 **Cargadores** - Munición\n💊 **Drogas** - Sustancias\n🗺️ **Planos** - Mapas de locaciones\n\n📊 **Ver stock completo**`);
@@ -129,8 +143,14 @@ async function mostrarHome(interaction, editar = false) {
     }
 }
 
+// CORREGIDO: Validación de categoría y codificación de nombres
 async function mostrarCategoria(interaction, categoria) {
     const productosCategoria = productos[categoria];
+    if (!productosCategoria) {
+        await interaction.reply({ content: '❌ Categoría no encontrada', ephemeral: true });
+        return;
+    }
+    
     const nombreCat = categoria.charAt(0).toUpperCase() + categoria.slice(1);
     const emojiCat = categoriaEmojis[categoria];
     
@@ -146,15 +166,13 @@ async function mostrarCategoria(interaction, categoria) {
 
     const botones = Object.entries(productosCategoria).map(([emoji, producto]) => 
         new ButtonBuilder()
-            .setCustomId(`prod_${producto}`)
+            .setCustomId(`prod_${codificarNombre(producto)}`)
             .setLabel(producto)
             .setEmoji(emoji)
             .setStyle(ButtonStyle.Success)
     );
 
-    botones.push(
-        new ButtonBuilder().setCustomId('home').setLabel('Inicio').setEmoji('🏠').setStyle(ButtonStyle.Secondary)
-    );
+    botones.push(new ButtonBuilder().setCustomId('home').setLabel('Inicio').setEmoji('🏠').setStyle(ButtonStyle.Secondary));
 
     const rows = crearBotones(botones);
     await interaction.update({ embeds: [embed], components: rows });
@@ -166,7 +184,16 @@ async function mostrarCategoria(interaction, categoria) {
     });
 }
 
+// CORREGIDO: Mantener categoría para navegación
 async function mostrarProducto(interaction, producto) {
+    let categoriaProducto = null;
+    for (const [catNombre, catProductos] of Object.entries(productos)) {
+        if (Object.values(catProductos).includes(producto)) {
+            categoriaProducto = catNombre;
+            break;
+        }
+    }
+    
     const emoji = obtenerEmojiProducto(producto);
     const stock = inventario[producto] || 0;
     const estado = stock === 0 ? '🔴 Agotado' : stock < 10 ? '🟡 Stock Bajo' : '🟢 Stock Normal';
@@ -175,8 +202,8 @@ async function mostrarProducto(interaction, producto) {
         .setDescription(`**Stock actual: ${stock}** ${estado}\n\n**¿Qué operación deseas realizar?**\n\n➕ **Agregar** - Aumentar stock\n➖ **Retirar** - Reducir stock`);
 
     const botones = [
-        new ButtonBuilder().setCustomId(`op_add_${producto}`).setLabel('Agregar Stock').setEmoji('➕').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId(`op_remove_${producto}`).setLabel('Retirar Stock').setEmoji('➖').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(`op_add_${codificarNombre(producto)}`).setLabel('Agregar Stock').setEmoji('➕').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`op_remove_${codificarNombre(producto)}`).setLabel('Retirar Stock').setEmoji('➖').setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId('back').setLabel('Volver').setEmoji('⬅️').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('home').setLabel('Inicio').setEmoji('🏠').setStyle(ButtonStyle.Secondary)
     ];
@@ -187,11 +214,19 @@ async function mostrarProducto(interaction, producto) {
     sesionesActivas.set(interaction.user.id, { 
         messageId: interaction.message.id, 
         estado: 'producto', 
-        producto: producto 
+        producto: producto,
+        categoria: categoriaProducto
     });
 }
 
+// CORREGIDO: Validación de producto y mejor codificación
 async function mostrarCantidades(interaction, operacion, producto) {
+    const todosProductos = Object.values(productos).flatMap(cat => Object.values(cat));
+    if (!todosProductos.includes(producto)) {
+        await interaction.reply({ content: '❌ Producto no encontrado', ephemeral: true });
+        return;
+    }
+    
     const emoji = obtenerEmojiProducto(producto);
     const stock = inventario[producto] || 0;
     const titulo = operacion === 'add' ? 'Agregar Stock' : 'Retirar Stock';
@@ -200,14 +235,15 @@ async function mostrarCantidades(interaction, operacion, producto) {
     const embed = crearEmbed(`${emoji} ${titulo}`, color)
         .setDescription(`**Producto:** ${producto}\n**Stock actual:** ${stock}\n\n**Selecciona la cantidad:**`);
 
+    const productoCode = codificarNombre(producto);
     const botones = [
-        new ButtonBuilder().setCustomId(`qty_${operacion}_${producto}_1`).setLabel('1').setEmoji('1️⃣').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(`qty_${operacion}_${producto}_2`).setLabel('2').setEmoji('2️⃣').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(`qty_${operacion}_${producto}_3`).setLabel('3').setEmoji('3️⃣').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(`qty_${operacion}_${producto}_5`).setLabel('5').setEmoji('5️⃣').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(`qty_${operacion}_${producto}_10`).setLabel('10').setEmoji('🔟').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(`qty_${operacion}_${producto}_25`).setLabel('25').setEmoji('🔥').setStyle(ButtonStyle.Warning),
-        new ButtonBuilder().setCustomId(`qty_${operacion}_${producto}_50`).setLabel('50').setEmoji('💥').setStyle(ButtonStyle.Warning),
+        new ButtonBuilder().setCustomId(`qty_${operacion}_${productoCode}_1`).setLabel('1').setEmoji('1️⃣').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`qty_${operacion}_${productoCode}_2`).setLabel('2').setEmoji('2️⃣').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`qty_${operacion}_${productoCode}_3`).setLabel('3').setEmoji('3️⃣').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`qty_${operacion}_${productoCode}_5`).setLabel('5').setEmoji('5️⃣').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`qty_${operacion}_${productoCode}_10`).setLabel('10').setEmoji('🔟').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`qty_${operacion}_${productoCode}_25`).setLabel('25').setEmoji('🔥').setStyle(ButtonStyle.Warning),
+        new ButtonBuilder().setCustomId(`qty_${operacion}_${productoCode}_50`).setLabel('50').setEmoji('💥').setStyle(ButtonStyle.Warning),
         new ButtonBuilder().setCustomId('back').setLabel('Volver').setEmoji('⬅️').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('home').setLabel('Inicio').setEmoji('🏠').setStyle(ButtonStyle.Secondary)
     ];
@@ -215,11 +251,13 @@ async function mostrarCantidades(interaction, operacion, producto) {
     const rows = crearBotones(botones);
     await interaction.update({ embeds: [embed], components: rows });
     
+    const sesion = sesionesActivas.get(interaction.user.id) || {};
     sesionesActivas.set(interaction.user.id, { 
         messageId: interaction.message.id, 
         estado: 'cantidad', 
         producto: producto,
-        operacion: operacion
+        operacion: operacion,
+        categoria: sesion.categoria
     });
 }
 
@@ -248,7 +286,7 @@ async function procesarOperacion(interaction, operacion, producto, cantidad) {
     const embed = crearEmbed('⚡ Resultado de Operación', color).setDescription(resultado);
 
     const botones = [
-        new ButtonBuilder().setCustomId(`prod_${producto}`).setLabel('Gestionar Producto').setEmoji('🔄').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`prod_${codificarNombre(producto)}`).setLabel('Gestionar Producto').setEmoji('🔄').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId('back').setLabel('Volver').setEmoji('⬅️').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('home').setLabel('Inicio').setEmoji('🏠').setStyle(ButtonStyle.Secondary)
     ];
@@ -279,65 +317,78 @@ async function mostrarStockCompleto(interaction) {
     await interaction.update({ embeds: [embed], components: rows });
 }
 
-// Manejo de interacciones con botones
+// CORREGIDO: Manejo de interacciones mejorado
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isButton()) return;
 
     const customId = interaction.customId;
     
     try {
-        // Navegación principal
         if (customId === 'home') {
             await mostrarHome(interaction, true);
         }
         else if (customId === 'back') {
             const sesion = sesionesActivas.get(interaction.user.id);
-            if (sesion?.estado === 'categoria') {
+            if (!sesion) {
                 await mostrarHome(interaction, true);
-            } else if (sesion?.estado === 'producto') {
+                return;
+            }
+            
+            if (sesion.estado === 'categoria') {
+                await mostrarHome(interaction, true);
+            } else if (sesion.estado === 'producto' && sesion.categoria) {
                 await mostrarCategoria(interaction, sesion.categoria);
-            } else if (sesion?.estado === 'cantidad') {
+            } else if (sesion.estado === 'cantidad' && sesion.producto) {
                 await mostrarProducto(interaction, sesion.producto);
+            } else {
+                await mostrarHome(interaction, true);
             }
         }
         else if (customId === 'stock_completo') {
             await mostrarStockCompleto(interaction);
         }
-        
-        // Categorías
         else if (customId.startsWith('cat_')) {
             const categoria = customId.replace('cat_', '');
             await mostrarCategoria(interaction, categoria);
         }
-        
-        // Productos
         else if (customId.startsWith('prod_')) {
-            const producto = customId.replace('prod_', '');
+            const productoEncoded = customId.replace('prod_', '');
+            const producto = decodificarNombre(productoEncoded);
             await mostrarProducto(interaction, producto);
         }
-        
-        // Operaciones
         else if (customId.startsWith('op_')) {
-            const [, operacion, ...productoParts] = customId.split('_');
-            const producto = productoParts.join('_');
+            const parts = customId.split('_');
+            const operacion = parts[1];
+            const productoEncoded = parts[2];
+            const producto = decodificarNombre(productoEncoded);
             await mostrarCantidades(interaction, operacion, producto);
         }
-        
-        // Cantidades
         else if (customId.startsWith('qty_')) {
-            const [, operacion, ...parts] = customId.split('_');
-            const cantidad = parseInt(parts.pop());
-            const producto = parts.join('_');
+            const parts = customId.split('_');
+            const operacion = parts[1];
+            const productoEncoded = parts[2];
+            const cantidad = parseInt(parts[3]);
+            const producto = decodificarNombre(productoEncoded);
+            
+            if (isNaN(cantidad)) {
+                await interaction.reply({ content: '❌ Cantidad inválida', ephemeral: true });
+                return;
+            }
+            
             await procesarOperacion(interaction, operacion, producto, cantidad);
         }
 
     } catch (error) {
-        console.error('❌ Error en interacción:', error.message);
-        await interaction.reply({ content: '❌ Error procesando operación', ephemeral: true });
+        console.error('❌ Error en interacción:', error);
+        console.error('CustomId:', customId);
+        await interaction.reply({ 
+            content: `❌ Error procesando operación: ${error.message}`, 
+            ephemeral: true 
+        }).catch(console.error);
     }
 });
 
-// Comandos de texto
+// --- COMANDOS DE TEXTO (sin cambios) ---
 const comandos = {
     async inventario(message) {
         const embed = crearEmbed('🎮 Inventario GTA RP', '#4169e1')
@@ -414,7 +465,7 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// Eventos del cliente
+// --- EVENTOS Y CONFIGURACIÓN (sin cambios) ---
 client.on('ready', async () => {
     console.log(`✅ Bot conectado: ${client.user.tag}`);
     client.user.setActivity('Inventario GTA RP 🔫', { type: ActivityType.Watching });
@@ -424,7 +475,6 @@ client.on('ready', async () => {
 
 client.on('error', error => console.error('❌ Error:', error.message));
 
-// Guardado automático y limpieza
 setInterval(async () => await guardarInventario(), 30000);
 setInterval(() => {
     const now = Date.now();
@@ -435,7 +485,6 @@ setInterval(() => {
     }
 }, 5 * 60 * 1000);
 
-// Cierre elegante
 ['SIGTERM', 'SIGINT'].forEach(signal => {
     process.on(signal, async () => {
         console.log('🛑 Cerrando bot...');
@@ -445,7 +494,6 @@ setInterval(() => {
     });
 });
 
-// Validación e inicio
 if (!DISCORD_TOKEN || !MONGODB_URI) {
     console.error('❌ Token Discord o URI MongoDB no configurados');
     process.exit(1);
