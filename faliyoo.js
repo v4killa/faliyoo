@@ -29,7 +29,7 @@ const client = new Client({
 let inventario = {};
 let sesionesActivas = new Map();
 
-// Productos organizados - CORREGIDO: Emoji problemático
+// Productos organizados
 const productos = {
     'armas': { '🔫': 'glock', '🏹': 'vintage', '💣': 'beretta', '🪓': 'hachas', '🔪': 'machetes' },
     'cargadores': { '📦': 'cargador pistolas', '🗃️': 'cargador subfusil' },
@@ -39,12 +39,18 @@ const productos = {
 
 const categoriaEmojis = { 'armas': '🔫', 'cargadores': '📦', 'drogas': '💊', 'planos': '🗺️' };
 
-// --- FUNCIONES MONGODB (sin cambios) ---
+// --- FUNCIONES MONGODB CORREGIDAS ---
 async function cargarInventario() {
     try {
         const productos = await inventarioCollection.find({}).toArray();
         inventario = {};
-        productos.forEach(p => inventario[p.nombre] = p.cantidad);
+        productos.forEach(p => {
+            // CORREGIDO: Validar tipos al cargar
+            if (p.nombre && typeof p.nombre === 'string') {
+                const cantidad = Number(p.cantidad);
+                inventario[p.nombre] = isNaN(cantidad) ? 0 : cantidad;
+            }
+        });
         console.log('✅ Inventario cargado:', Object.keys(inventario).length, 'items');
     } catch (error) {
         console.error('❌ Error cargando inventario:', error.message);
@@ -52,20 +58,48 @@ async function cargarInventario() {
     }
 }
 
+// FUNCIÓN CORREGIDA: Validación completa antes de guardar
 async function guardarInventario() {
     try {
-        const operaciones = Object.entries(inventario).map(([nombre, cantidad]) => ({
+        // Validar datos antes de guardar
+        const inventarioValidado = {};
+        
+        for (const [nombre, cantidad] of Object.entries(inventario)) {
+            // Asegurar que nombre sea string y cantidad sea número
+            if (typeof nombre === 'string' && nombre.trim() !== '') {
+                const cantidadNum = Number(cantidad);
+                if (!isNaN(cantidadNum) && cantidadNum >= 0) {
+                    inventarioValidado[nombre.trim()] = cantidadNum;
+                } else {
+                    console.warn(`⚠️ Cantidad inválida para ${nombre}:`, cantidad);
+                    inventarioValidado[nombre.trim()] = 0; // Valor por defecto
+                }
+            } else {
+                console.warn(`⚠️ Nombre de producto inválido:`, nombre);
+            }
+        }
+        
+        const operaciones = Object.entries(inventarioValidado).map(([nombre, cantidad]) => ({
             updateOne: {
                 filter: { nombre },
-                update: { $set: { nombre, cantidad, ultimaActualizacion: new Date() } },
+                update: { 
+                    $set: { 
+                        nombre: String(nombre), 
+                        cantidad: Number(cantidad), 
+                        ultimaActualizacion: new Date() 
+                    } 
+                },
                 upsert: true
             }
         }));
+        
         if (operaciones.length > 0) {
             await inventarioCollection.bulkWrite(operaciones);
+            console.log(`✅ Guardado: ${operaciones.length} productos`);
         }
     } catch (error) {
         console.error('❌ Error guardando:', error.message);
+        console.error('Stack completo:', error.stack);
     }
 }
 
@@ -86,7 +120,6 @@ function crearEmbed(title, color = '#8b0000') {
     return new EmbedBuilder().setColor(color).setTitle(title).setTimestamp();
 }
 
-// CORREGIDO: Mejor comparación de nombres
 function obtenerEmojiProducto(nombreProducto) {
     for (const categoria of Object.values(productos)) {
         for (const [emoji, nombre] of Object.entries(categoria)) {
@@ -107,7 +140,6 @@ function crearBotones(botones) {
     return rows;
 }
 
-// CORREGIDO: Codificación de nombres para evitar problemas con espacios
 function codificarNombre(nombre) {
     return Buffer.from(nombre).toString('base64');
 }
@@ -143,7 +175,6 @@ async function mostrarHome(interaction, editar = false) {
     }
 }
 
-// CORREGIDO: Validación de categoría y codificación de nombres
 async function mostrarCategoria(interaction, categoria) {
     const productosCategoria = productos[categoria];
     if (!productosCategoria) {
@@ -156,7 +187,7 @@ async function mostrarCategoria(interaction, categoria) {
     
     let descripcion = `**Productos disponibles:**\n\n`;
     for (const [emoji, producto] of Object.entries(productosCategoria)) {
-        const stock = inventario[producto] || 0;
+        const stock = Number(inventario[producto]) || 0;
         const estado = stock === 0 ? '🔴' : stock < 10 ? '🟡' : '🟢';
         descripcion += `${estado} ${emoji} **${producto}** - Stock: **${stock}**\n`;
     }
@@ -184,7 +215,6 @@ async function mostrarCategoria(interaction, categoria) {
     });
 }
 
-// CORREGIDO: Mantener categoría para navegación
 async function mostrarProducto(interaction, producto) {
     let categoriaProducto = null;
     for (const [catNombre, catProductos] of Object.entries(productos)) {
@@ -195,7 +225,7 @@ async function mostrarProducto(interaction, producto) {
     }
     
     const emoji = obtenerEmojiProducto(producto);
-    const stock = inventario[producto] || 0;
+    const stock = Number(inventario[producto]) || 0;
     const estado = stock === 0 ? '🔴 Agotado' : stock < 10 ? '🟡 Stock Bajo' : '🟢 Stock Normal';
     
     const embed = crearEmbed(`${emoji} ${producto.toUpperCase()}`, '#ffc107')
@@ -219,7 +249,6 @@ async function mostrarProducto(interaction, producto) {
     });
 }
 
-// CORREGIDO: Validación de producto y mejor codificación
 async function mostrarCantidades(interaction, operacion, producto) {
     const todosProductos = Object.values(productos).flatMap(cat => Object.values(cat));
     if (!todosProductos.includes(producto)) {
@@ -228,7 +257,7 @@ async function mostrarCantidades(interaction, operacion, producto) {
     }
     
     const emoji = obtenerEmojiProducto(producto);
-    const stock = inventario[producto] || 0;
+    const stock = Number(inventario[producto]) || 0;
     const titulo = operacion === 'add' ? 'Agregar Stock' : 'Retirar Stock';
     const color = operacion === 'add' ? '#28a745' : '#dc3545';
     
@@ -261,23 +290,57 @@ async function mostrarCantidades(interaction, operacion, producto) {
     });
 }
 
+// FUNCIÓN CORREGIDA: Con todas las validaciones implementadas
 async function procesarOperacion(interaction, operacion, producto, cantidad) {
     const emoji = obtenerEmojiProducto(producto);
     let resultado, color;
     
+    // VALIDACIONES AGREGADAS:
+    
+    // 1. Validar que cantidad sea un número válido
+    if (typeof cantidad !== 'number' || isNaN(cantidad) || cantidad <= 0) {
+        await interaction.reply({ 
+            content: `❌ Error: Cantidad inválida (${cantidad}). Debe ser un número positivo.`, 
+            ephemeral: true 
+        });
+        return;
+    }
+    
+    // 2. Validar que el producto exista
+    const todosProductos = Object.values(productos).flatMap(cat => Object.values(cat));
+    if (!todosProductos.includes(producto)) {
+        await interaction.reply({ 
+            content: `❌ Error: Producto no encontrado (${producto})`, 
+            ephemeral: true 
+        });
+        return;
+    }
+    
+    // 3. Inicializar inventario del producto si no existe
+    if (!(producto in inventario)) {
+        inventario[producto] = 0;
+    }
+    
     if (operacion === 'add') {
-        inventario[producto] = (inventario[producto] || 0) + cantidad;
-        resultado = `✅ **OPERACIÓN EXITOSA**\n\n${emoji} **${producto}**\n➕ **Agregado:** ${cantidad} unidades\n📊 **Nuevo stock:** ${inventario[producto]}`;
+        // CORREGIDO: Asegurar que ambos valores sean números
+        const stockActual = Number(inventario[producto]) || 0;
+        const cantidadAgregar = Number(cantidad);
+        
+        inventario[producto] = stockActual + cantidadAgregar;
+        resultado = `✅ **OPERACIÓN EXITOSA**\n\n${emoji} **${producto}**\n➕ **Agregado:** ${cantidadAgregar} unidades\n📊 **Nuevo stock:** ${inventario[producto]}`;
         color = '#28a745';
         await guardarInventario();
     } else {
-        const stockActual = inventario[producto] || 0;
-        if (stockActual < cantidad) {
-            resultado = `❌ **STOCK INSUFICIENTE**\n\n${emoji} **${producto}**\n📊 **Stock disponible:** ${stockActual}\n🚫 **Cantidad solicitada:** ${cantidad}`;
+        // CORREGIDO: Conversión explícita a números
+        const stockActual = Number(inventario[producto]) || 0;
+        const cantidadRetirar = Number(cantidad);
+        
+        if (stockActual < cantidadRetirar) {
+            resultado = `❌ **STOCK INSUFICIENTE**\n\n${emoji} **${producto}**\n📊 **Stock disponible:** ${stockActual}\n🚫 **Cantidad solicitada:** ${cantidadRetirar}`;
             color = '#dc3545';
         } else {
-            inventario[producto] -= cantidad;
-            resultado = `📤 **OPERACIÓN EXITOSA**\n\n${emoji} **${producto}**\n➖ **Retirado:** ${cantidad} unidades\n📊 **Stock restante:** ${inventario[producto]}`;
+            inventario[producto] = stockActual - cantidadRetirar;
+            resultado = `📤 **OPERACIÓN EXITOSA**\n\n${emoji} **${producto}**\n➖ **Retirado:** ${cantidadRetirar} unidades\n📊 **Stock restante:** ${inventario[producto]}`;
             color = '#dc3545';
             await guardarInventario();
         }
@@ -301,7 +364,7 @@ async function mostrarStockCompleto(interaction) {
         const emojiCat = categoriaEmojis[catNombre];
         descripcion += `\n**${emojiCat} ${catNombre.toUpperCase()}:**\n`;
         for (const [emoji, producto] of Object.entries(catProductos)) {
-            const stock = inventario[producto] || 0;
+            const stock = Number(inventario[producto]) || 0;
             const estado = stock === 0 ? '🔴' : stock < 10 ? '🟡' : '🟢';
             descripcion += `${estado} ${emoji} ${producto}: **${stock}**\n`;
         }
@@ -317,7 +380,7 @@ async function mostrarStockCompleto(interaction) {
     await interaction.update({ embeds: [embed], components: rows });
 }
 
-// CORREGIDO: Manejo de interacciones mejorado
+// MANEJADOR DE INTERACCIONES CORREGIDO
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isButton()) return;
 
@@ -365,13 +428,34 @@ client.on('interactionCreate', async (interaction) => {
         }
         else if (customId.startsWith('qty_')) {
             const parts = customId.split('_');
+            if (parts.length < 4) {
+                await interaction.reply({ content: '❌ Formato de botón inválido', ephemeral: true });
+                return;
+            }
+            
             const operacion = parts[1];
             const productoEncoded = parts[2];
-            const cantidad = parseInt(parts[3]);
+            const cantidadStr = parts[3];
+            
+            // VALIDACIÓN MEJORADA
+            const cantidad = parseInt(cantidadStr, 10);
             const producto = decodificarNombre(productoEncoded);
             
-            if (isNaN(cantidad)) {
-                await interaction.reply({ content: '❌ Cantidad inválida', ephemeral: true });
+            console.log('Debug operación:', { operacion, producto, cantidadStr, cantidad }); // Para debugging
+            
+            if (isNaN(cantidad) || cantidad <= 0) {
+                await interaction.reply({ 
+                    content: `❌ Cantidad inválida: "${cantidadStr}" -> ${cantidad}`, 
+                    ephemeral: true 
+                });
+                return;
+            }
+            
+            if (!producto || producto.trim() === '') {
+                await interaction.reply({ 
+                    content: '❌ Producto no válido', 
+                    ephemeral: true 
+                });
                 return;
             }
             
@@ -381,14 +465,24 @@ client.on('interactionCreate', async (interaction) => {
     } catch (error) {
         console.error('❌ Error en interacción:', error);
         console.error('CustomId:', customId);
-        await interaction.reply({ 
-            content: `❌ Error procesando operación: ${error.message}`, 
-            ephemeral: true 
-        }).catch(console.error);
+        console.error('Stack:', error.stack); // Más información para debugging
+        
+        // Respuesta de error más informativa
+        const errorMsg = `❌ Error procesando operación: ${error.message}`;
+        
+        try {
+            if (interaction.replied || interaction.deferred) {
+                await interaction.followUp({ content: errorMsg, ephemeral: true });
+            } else {
+                await interaction.reply({ content: errorMsg, ephemeral: true });
+            }
+        } catch (replyError) {
+            console.error('❌ Error enviando respuesta de error:', replyError);
+        }
     }
 });
 
-// --- COMANDOS DE TEXTO (sin cambios) ---
+// --- COMANDOS DE TEXTO ---
 const comandos = {
     async inventario(message) {
         const embed = crearEmbed('🎮 Inventario GTA RP', '#4169e1')
@@ -412,7 +506,7 @@ const comandos = {
             let descripcion = '**📊 STOCK RÁPIDO:**\n\n';
             for (const [catNombre, catProductos] of Object.entries(productos)) {
                 for (const [emoji, producto] of Object.entries(catProductos)) {
-                    const stock = inventario[producto] || 0;
+                    const stock = Number(inventario[producto]) || 0;
                     const estado = stock === 0 ? '🔴' : stock < 10 ? '🟡' : '🟢';
                     descripcion += `${estado}${emoji} ${producto}: **${stock}**\n`;
                 }
@@ -430,7 +524,7 @@ const comandos = {
             
             let descripcion = `**🔍 "${termino}":**\n\n`;
             for (const producto of encontrados) {
-                const stock = inventario[producto] || 0;
+                const stock = Number(inventario[producto]) || 0;
                 const emoji = obtenerEmojiProducto(producto);
                 const estado = stock === 0 ? '🔴' : stock < 10 ? '🟡' : '🟢';
                 descripcion += `${estado}${emoji} **${producto}**: ${stock}\n`;
@@ -465,7 +559,7 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// --- EVENTOS Y CONFIGURACIÓN (sin cambios) ---
+// --- EVENTOS Y CONFIGURACIÓN ---
 client.on('ready', async () => {
     console.log(`✅ Bot conectado: ${client.user.tag}`);
     client.user.setActivity('Inventario GTA RP 🔫', { type: ActivityType.Watching });
