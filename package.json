@@ -6,6 +6,7 @@
     "start": "node faliyoo.js"
   },
   "dependencies": {
+    "discord.js": "^14.14.1",
     "mongodb": "^6.0.0"
   }
 }
