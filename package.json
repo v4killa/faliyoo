@@ -1,20 +1,11 @@
 {
   "name": "Faliyoo",
   "version": "1.0.0",
-  "description": "Bot de inventario para GTA RP en Discord",
   "main": "faliyoo.js",
   "scripts": {
-    "start": "node faliyoo.js",
-    "dev": "node faliyoo.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node faliyoo.js"
   },
-  "keywords": ["discord", "bot", "inventory", "gta-rp"],
-  "author": "V4KILLA",
-  "license": "MIT",
   "dependencies": {
-    "discord.js": "^14.14.1"
-  },
-  "engines": {
-    "node": ">=16.0.0"
+    "mongodb": "^6.0.0"
   }
 }
