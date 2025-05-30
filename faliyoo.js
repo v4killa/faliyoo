@@ -38,18 +38,18 @@ const productos = {
         '🔫': 'glock',
         '🏹': 'vintage', 
         '💣': 'beretta',
-        '⚔️': 'ak47',
-        '🔪': 'uzi'
+        '🪓': 'hachas',
+        '🔪': 'machetes'
     },
     'cargadores': {
         '📦': 'cargador pistolas',
         '🗃️': 'cargador subfusil'
     },
     'drogas': {
-        '🚬': 'bongs',
+        '𖠞': 'bongs',
         '💊': 'pcp',
         '🍪': 'galletas',
-        '⚗️': 'fentanilo',
+        '💉': 'fentanilo',
         '❄️': 'cocaina',
         '🌿': 'marihuana'
     },
@@ -59,7 +59,8 @@ const productos = {
         '💎': 'joyeria',
         '💇': 'barberia',
         '🍺': 'licoreria',
-        '🏦': 'banco'
+        '➕': 'farmacia',
+        '🛠️': 'arquitectinicos'
     }
 };
 
